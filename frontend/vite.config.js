@@ -6,9 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    host: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: process.env.DOCKER_ENV ? 'http://backend:5000' : 'http://localhost:5000',
         changeOrigin: true
       }
     }

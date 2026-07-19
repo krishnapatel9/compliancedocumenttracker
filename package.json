@@ -8,12 +8,12 @@
   ],
   "scripts": {
     "install:all": "npm install --workspaces --include=dev && npm install",
-    "dev:backend": "pnpm --filter backend dev",
-    "dev:frontend": "pnpm --filter frontend dev",
-    "dev": "concurrently \"pnpm dev:backend\" \"pnpm dev:frontend\"",
-    "prisma:migrate": "pnpm --filter backend db:migrate",
-    "prisma:generate": "pnpm --filter backend prisma:generate",
-    "db:seed": "pnpm --filter backend db:seed"
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev": "node dev.js",
+    "prisma:migrate": "npm run db:migrate --workspace=backend",
+    "prisma:generate": "npm run prisma:generate --workspace=backend",
+    "db:seed": "npm run db:seed --workspace=backend"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
