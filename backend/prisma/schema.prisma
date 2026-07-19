@@ -1,0 +1,55 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum DocumentCategory {
+  license
+  certificate
+  insurance
+  contract
+  permit
+  tax_document
+}
+
+model Admin {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admin")
+}
+
+model Document {
+  id            String         @id @default(uuid()) @db.Uuid
+  title         String
+  category      DocumentCategory
+  issueDate     DateTime       @map("issue_date") @db.Date
+  expiryDate    DateTime       @map("expiry_date") @db.Date
+  notifyEmail   String         @map("notify_email")
+  filePath      String         @map("file_path")
+  description   String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  notifications Notification[]
+
+  @@map("documents")
+}
+
+model Notification {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  daysBefore Int      @map("days_before")
+  sentAt     DateTime @default(now()) @map("sent_at")
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, daysBefore])
+  @@map("notifications")
+}
