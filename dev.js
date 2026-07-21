@@ -1,18 +1,17 @@
 const { spawn } = require('child_process');
 
-console.log('[+] Starting DocShield ecosystem launcher...');
+console.log('[+] Starting DocShield ecosystem launcher using PNPM...');
 
-// Under Windows process environments, child_process.spawn requires targeting 'npm.cmd' rather than 'npm'
-const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const pnpmCmd = 'pnpm';
 
 // Start backend
-const backend = spawn(npmCmd, ['run', 'dev', '--workspace=backend'], {
+const backend = spawn(pnpmCmd, ['--filter', 'backend', 'dev'], {
     stdio: 'inherit',
     shell: true
 });
 
 // Start frontend
-const frontend = spawn(npmCmd, ['run', 'dev', '--workspace=frontend'], {
+const frontend = spawn(pnpmCmd, ['--filter', 'frontend', 'dev'], {
     stdio: 'inherit',
     shell: true
 });

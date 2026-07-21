@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
+const { deleteFile, saveFile } = require('../utils/storage');
 const { createDocumentSchema } = require('../validators/documentValidator');
 
 const prisma = new PrismaClient();
@@ -29,7 +30,7 @@ const createDocument = async (req, res) => {
 
     const result = createDocumentSchema.safeParse(req.body);
     if (!result.success) {
-        fs.unlinkSync(req.file.path);
+        deleteFile(req.file.path);
         return res.status(400).json({
             error: 'Validation failed',
             details: result.error.flatten().fieldErrors
@@ -46,16 +47,18 @@ const createDocument = async (req, res) => {
     expiry.setHours(0, 0, 0, 0);
 
     if (issue > today) {
-        fs.unlinkSync(req.file.path);
+        deleteFile(req.file.path);
         return res.status(400).json({ error: 'Validation failed', details: { issueDate: ['Issue date cannot be in the future'] } });
     }
 
     if (expiry <= issue) {
-        fs.unlinkSync(req.file.path);
+        deleteFile(req.file.path);
         return res.status(400).json({ error: 'Validation failed', details: { expiryDate: ['Expiry date must be after the issue date'] } });
     }
 
     try {
+        const storedPath = await saveFile(req.file);
+
         const document = await prisma.document.create({
             data: {
                 title,
@@ -64,7 +67,7 @@ const createDocument = async (req, res) => {
                 expiryDate: expiry,
                 notifyEmail,
                 description: description || null,
-                filePath: req.file.path
+                filePath: storedPath
             }
         });
 
@@ -79,9 +82,7 @@ const createDocument = async (req, res) => {
             }
         });
     } catch (error) {
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
+        deleteFile(req.file.path);
         return res.status(500).json({ error: 'Database error during document creation', details: error.message });
     }
 };
@@ -182,13 +183,13 @@ const updateDocument = async (req, res) => {
 
         const existingDoc = await prisma.document.findUnique({ where: { id } });
         if (!existingDoc) {
-            if (req.file) fs.unlinkSync(req.file.path);
+            if (req.file) deleteFile(req.file.path);
             return res.status(404).json({ error: 'Document not found' });
         }
 
         const result = updateDocumentSchema.safeParse(req.body);
         if (!result.success) {
-            if (req.file) fs.unlinkSync(req.file.path);
+            if (req.file) deleteFile(req.file.path);
             return res.status(400).json({
                 error: 'Validation failed',
                 details: result.error.flatten().fieldErrors
@@ -207,12 +208,12 @@ const updateDocument = async (req, res) => {
         expiry.setHours(0, 0, 0, 0);
 
         if (updateData.issueDate && issue > today) {
-            if (req.file) fs.unlinkSync(req.file.path);
+            if (req.file) deleteFile(req.file.path);
             return res.status(400).json({ error: 'Validation failed', details: { issueDate: ['Issue date cannot be in the future'] } });
         }
 
         if (expiry <= issue) {
-            if (req.file) fs.unlinkSync(req.file.path);
+            if (req.file) deleteFile(req.file.path);
             return res.status(400).json({ error: 'Validation failed', details: { expiryDate: ['Expiry date must be after the issue date'] } });
         }
 
@@ -222,7 +223,7 @@ const updateDocument = async (req, res) => {
         let oldFilePath = null;
         if (req.file) {
             oldFilePath = existingDoc.filePath;
-            updateData.filePath = req.file.path;
+            updateData.filePath = await saveFile(req.file);
         }
 
         const updated = await prisma.document.update({
@@ -230,8 +231,8 @@ const updateDocument = async (req, res) => {
             data: updateData
         });
 
-        if (oldFilePath && fs.existsSync(oldFilePath)) {
-            fs.unlinkSync(oldFilePath);
+        if (oldFilePath) {
+            deleteFile(oldFilePath);
         }
 
         const statusInfo = computeStatus(updated.expiryDate);
@@ -246,8 +247,8 @@ const updateDocument = async (req, res) => {
         });
 
     } catch (error) {
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
+        if (req.file) {
+            deleteFile(req.file.path);
         }
         return res.status(500).json({ error: 'Database error during update', details: error.message });
     }
@@ -267,9 +268,7 @@ const deleteDocument = async (req, res) => {
             where: { id }
         });
 
-        if (fs.existsSync(document.filePath)) {
-            fs.unlinkSync(document.filePath);
-        }
+        deleteFile(document.filePath);
 
         return res.status(200).json({ message: 'Document and associated files deleted successfully' });
     } catch (error) {

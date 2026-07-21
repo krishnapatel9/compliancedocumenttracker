@@ -1,12 +1,26 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const prisma = new PrismaClient();
+
+// Configure Helmet with Swagger-dist CSP allowances
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+            "script-src": ["'self'", "'unsafe-inline'", "unpkg.com"],
+            "style-src": ["'self'", "'unsafe-inline'", "unpkg.com"],
+            "img-src": ["'self'", "data:", "unpkg.com"],
+        },
+    },
+}));
 
 app.use(cors());
 app.use(express.json());
@@ -20,6 +34,16 @@ const swaggerRoutes = require('./routes/swaggerRoutes');
 
 // Load cron service to initialize node-cron schedules
 require('./services/cronService');
+
+// Apply rate limiting to login endpoint specifically
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit IP to 5 requests per windowMs
+    message: { error: 'Too many login attempts. Please try again after 15 minutes.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use('/api/auth/login', loginLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);

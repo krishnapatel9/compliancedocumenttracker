@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
+const verifyPdf = require('../middleware/verifyPdfMiddleware');
 const { createDocument, getDocuments, getDocumentById, updateDocument, deleteDocument, downloadDocumentFile } = require('../controllers/documentController');
 
-router.post('/', protect, upload.single('file'), createDocument);
+router.post('/', protect, upload.single('file'), verifyPdf, createDocument);
 router.get('/', protect, getDocuments);
 router.get('/:id', protect, getDocumentById);
-router.put('/:id', protect, upload.single('file'), updateDocument);
+router.put('/:id', protect, upload.single('file'), verifyPdf, updateDocument);
 router.delete('/:id', protect, deleteDocument);
 router.get('/:id/file', protect, downloadDocumentFile);
 
