@@ -31,6 +31,8 @@ const documentRoutes = require('./routes/documentRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const cronRoutes = require('./routes/cronRoutes');
 const swaggerRoutes = require('./routes/swaggerRoutes');
+const frameworkRoutes = require('./routes/frameworkRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Load cron service to initialize node-cron schedules
 require('./services/cronService');
@@ -48,6 +50,8 @@ app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/frameworks', frameworkRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/services/cron', cronRoutes);
 app.use('/api-docs', swaggerRoutes);
 

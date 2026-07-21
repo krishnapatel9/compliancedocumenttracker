@@ -42,14 +42,26 @@ function Sidebar({ currentPage, setCurrentPage }) {
                     >
                         <span>📄</span>
                     </button>
-                    {/* Static placeholders matching screenshot items */}
-                    <button className="sidebar-menu-btn" title="Shield Frameworks (Locked)">
+                    {/* Active menu controls mapping */}
+                    <button
+                        className={`sidebar-menu-btn ${currentPage === 'frameworks' ? 'active' : ''}`}
+                        onClick={() => setCurrentPage('frameworks')}
+                        title="Shield Frameworks"
+                    >
                         <span>🛡️</span>
                     </button>
-                    <button className="sidebar-menu-btn" title="System Warnings (Locked)">
+                    <button
+                        className={`sidebar-menu-btn ${currentPage === 'warnings' ? 'active' : ''}`}
+                        onClick={() => setCurrentPage('warnings')}
+                        title="System Warnings Logs"
+                    >
                         <span>⚠</span>
                     </button>
-                    <button className="sidebar-menu-btn" title="Activity Analytics (Locked)">
+                    <button
+                        className={`sidebar-menu-btn ${currentPage === 'analytics' ? 'active' : ''}`}
+                        onClick={() => setCurrentPage('analytics')}
+                        title="Activity Analytics"
+                    >
                         <span>📊</span>
                     </button>
                 </nav>

@@ -4,6 +4,9 @@ import Login from './pages/Login';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Documents from './pages/Documents';
+import Frameworks from './pages/Frameworks';
+import Warnings from './pages/Warnings';
+import Analytics from './pages/Analytics';
 
 function MainApp() {
     const { token, loading } = useAuth();
@@ -46,7 +49,10 @@ function MainApp() {
                     >
                         Inventory
                     </button>
-                    <button className="nav-link" title="Compliance Frameworks (Locked)">
+                    <button
+                        className={`nav-link ${currentPage === 'frameworks' ? 'active' : ''}`}
+                        onClick={() => setCurrentPage('frameworks')}
+                    >
                         Frameworks
                     </button>
                 </div>
@@ -68,6 +74,9 @@ function MainApp() {
                 <main className="admin-main">
                     {currentPage === 'dashboard' && <Dashboard />}
                     {currentPage === 'documents' && <Documents />}
+                    {currentPage === 'frameworks' && <Frameworks />}
+                    {currentPage === 'warnings' && <Warnings />}
+                    {currentPage === 'analytics' && <Analytics />}
                 </main>
             </div>
         </div>

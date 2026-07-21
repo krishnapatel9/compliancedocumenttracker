@@ -37,7 +37,8 @@ model Document {
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
   
-  notifications Notification[]
+  notifications     Notification[]
+  frameworkControls FrameworkControl[]
 
   @@map("documents")
 }
@@ -52,4 +53,18 @@ model Notification {
 
   @@unique([documentId, daysBefore])
   @@map("notifications")
+}
+
+model FrameworkControl {
+  id          String    @id @default(uuid()) @db.Uuid
+  framework   String    // 'SOC2', 'ISO27001', 'GDPR'
+  controlCode String    @map("control_code") // e.g., 'CC1.1', 'A.9.1'
+  name        String
+  description String?
+  documentId  String?   @map("document_id") @db.Uuid
+  linkedAt    DateTime? @map("linked_at")
+
+  document    Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@map("framework_controls")
 }
