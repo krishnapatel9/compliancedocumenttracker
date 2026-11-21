@@ -1,5 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { todayDateOnly } = require('../utils/dates');
+const { computeStatus } = require('../utils/documentStatus');
 
 /**
  * Get all sent email notifications with computed document statuses
@@ -15,30 +17,18 @@ const getNotificationsLog = async (req, res) => {
             }
         });
 
-        // Compute days remaining and status inline for each linked document
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = todayDateOnly();
 
         const logs = notifications.map(notif => {
             if (!notif.document) return notif;
 
-            const expiry = new Date(notif.document.expiryDate);
-            expiry.setHours(0, 0, 0, 0);
-
-            const diffTime = expiry.getTime() - today.getTime();
-            const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-            let computedStatus = 'active';
-            if (daysRemaining < 0) {
-                computedStatus = 'expired';
-            } else if (daysRemaining <= 30) {
-                computedStatus = 'expiring_soon';
-            }
+            const { status: computedStatus, daysRemaining } = computeStatus(notif.document.expiryDate, today);
 
             return {
                 id: notif.id,
                 sentAt: notif.sentAt,
                 daysBefore: notif.daysBefore,
+                expiryDate: notif.expiryDate,
                 document: {
                     id: notif.document.id,
                     title: notif.document.title,

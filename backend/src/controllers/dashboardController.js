@@ -1,41 +1,24 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { todayDateOnly } = require('../utils/dates');
+const { statusWhere, expiringWithinWhere } = require('../utils/documentStatus');
 
 const getDashboardStats = async (req, res) => {
     try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const plus7Days = new Date(today);
-        plus7Days.setDate(today.getDate() + 7);
-        plus7Days.setHours(23, 59, 59, 999);
-
-        const plus30Days = new Date(today);
-        plus30Days.setDate(today.getDate() + 30);
-        plus30Days.setHours(23, 59, 59, 999);
+        const today = todayDateOnly();
 
         const total = await prisma.document.count();
 
         const expired = await prisma.document.count({
-            where: { expiryDate: { lt: today } }
+            where: { expiryDate: statusWhere('expired', today) }
         });
 
         const expiring7d = await prisma.document.count({
-            where: {
-                expiryDate: {
-                    gte: today,
-                    lte: plus7Days
-                }
-            }
+            where: { expiryDate: expiringWithinWhere(7, today) }
         });
 
         const expiring30d = await prisma.document.count({
-            where: {
-                expiryDate: {
-                    gte: today,
-                    lte: plus30Days
-                }
-            }
+            where: { expiryDate: expiringWithinWhere(30, today) }
         });
 
         const categoriesGroup = await prisma.document.groupBy({
@@ -65,18 +48,12 @@ const getDashboardStats = async (req, res) => {
         const warningsCount = await prisma.notification.count();
 
         // 3. Document distribution by future expiry time-windows
-        const plus60Days = new Date(today);
-        plus60Days.setDate(today.getDate() + 60);
-
-        const plus90Days = new Date(today);
-        plus90Days.setDate(today.getDate() + 90);
-
         const expiring60d = await prisma.document.count({
-            where: { expiryDate: { gte: today, lte: plus60Days } }
+            where: { expiryDate: expiringWithinWhere(60, today) }
         });
 
         const expiring90d = await prisma.document.count({
-            where: { expiryDate: { gte: today, lte: plus90Days } }
+            where: { expiryDate: expiringWithinWhere(90, today) }
         });
 
         // 4. Monthly uploads trend for past 6 months

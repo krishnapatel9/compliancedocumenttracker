@@ -124,7 +124,7 @@ function Warnings() {
                                             <div>
                                                 <span style={{ color: '#4c6ef5', fontWeight: 600 }}>[ALERT SENT]</span>
                                                 <span style={{ color: '#fff', marginLeft: '0.5rem' }}>"{notif.document.title}"</span>
-                                                <span style={{ color: '#a6a7ab', marginLeft: '0.50rem' }}>expired threshold milestone ({notif.daysBefore} days left) warning dispatched to</span>
+                                                <span style={{ color: '#a6a7ab', marginLeft: '0.50rem' }}>{notif.daysBefore === 0 ? 'expiry' : `${notif.daysBefore}-day`} warning dispatched to</span>
                                                 <span style={{ color: '#ffd43b', marginLeft: '0.5rem' }}>{notif.document.notifyEmail}</span>
                                             </div>
                                         </div>

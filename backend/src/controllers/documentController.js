@@ -2,26 +2,10 @@ const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const { deleteFile, saveFile } = require('../utils/storage');
 const { createDocumentSchema } = require('../validators/documentValidator');
+const { toDateOnly, todayDateOnly } = require('../utils/dates');
+const { computeStatus, statusWhere } = require('../utils/documentStatus');
 
 const prisma = new PrismaClient();
-
-const computeStatus = (expiryDate) => {
-    const expiry = new Date(expiryDate);
-    const current = new Date();
-    expiry.setHours(0, 0, 0, 0);
-    current.setHours(0, 0, 0, 0);
-
-    const diffTime = expiry - current;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) {
-        return { status: 'expired', daysRemaining: diffDays };
-    } else if (diffDays <= 30) {
-        return { status: 'expiring_soon', daysRemaining: diffDays };
-    } else {
-        return { status: 'active', daysRemaining: diffDays };
-    }
-};
 
 const createDocument = async (req, res) => {
     if (!req.file) {
@@ -39,12 +23,14 @@ const createDocument = async (req, res) => {
 
     const { title, category, issueDate, expiryDate, notifyEmail, description } = result.data;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const issue = new Date(issueDate);
-    issue.setHours(0, 0, 0, 0);
-    const expiry = new Date(expiryDate);
-    expiry.setHours(0, 0, 0, 0);
+    const today = todayDateOnly();
+    const issue = toDateOnly(issueDate);
+    const expiry = toDateOnly(expiryDate);
+
+    if (!issue || !expiry) {
+        deleteFile(req.file.path);
+        return res.status(400).json({ error: 'Validation failed', details: { issueDate: ['Dates must be valid YYYY-MM-DD values'] } });
+    }
 
     if (issue > today) {
         deleteFile(req.file.path);
@@ -95,13 +81,6 @@ const getDocuments = async (req, res) => {
         const limitNum = parseInt(limit);
         const skip = (pageNum - 1) * limitNum;
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const plus30Days = new Date(today);
-        plus30Days.setDate(today.getDate() + 30);
-        plus30Days.setHours(23, 59, 59, 999);
-
         const where = {};
 
         if (search) {
@@ -116,12 +95,9 @@ const getDocuments = async (req, res) => {
         }
 
         if (status) {
-            if (status === 'expired') {
-                where.expiryDate = { lt: today };
-            } else if (status === 'expiring_soon') {
-                where.expiryDate = { gte: today, lte: plus30Days };
-            } else if (status === 'active') {
-                where.expiryDate = { gt: plus30Days };
+            const expiryFilter = statusWhere(status);
+            if (expiryFilter) {
+                where.expiryDate = expiryFilter;
             }
         }
 
@@ -198,14 +174,14 @@ const updateDocument = async (req, res) => {
 
         const updateData = { ...result.data };
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = todayDateOnly();
+        const issue = toDateOnly(updateData.issueDate || existingDoc.issueDate);
+        const expiry = toDateOnly(updateData.expiryDate || existingDoc.expiryDate);
 
-        const issue = updateData.issueDate ? new Date(updateData.issueDate) : new Date(existingDoc.issueDate);
-        issue.setHours(0, 0, 0, 0);
-
-        const expiry = updateData.expiryDate ? new Date(updateData.expiryDate) : new Date(existingDoc.expiryDate);
-        expiry.setHours(0, 0, 0, 0);
+        if (!issue || !expiry) {
+            if (req.file) deleteFile(req.file.path);
+            return res.status(400).json({ error: 'Validation failed', details: { issueDate: ['Dates must be valid YYYY-MM-DD values'] } });
+        }
 
         if (updateData.issueDate && issue > today) {
             if (req.file) deleteFile(req.file.path);

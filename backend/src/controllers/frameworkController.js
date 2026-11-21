@@ -1,5 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { todayDateOnly } = require('../utils/dates');
+const { computeStatus } = require('../utils/documentStatus');
 
 // Predefined core requirements for compliance frameworks
 const STATIC_CONTROLS = [
@@ -108,9 +110,7 @@ const getFrameworkControls = async (req, res) => {
             }
         });
 
-        // Compute days remaining and status inline for each linked document
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = todayDateOnly();
 
         const controlMap = {};
         linkedControls.forEach(item => {
@@ -118,18 +118,7 @@ const getFrameworkControls = async (req, res) => {
 
             let docDetails = null;
             if (item.document) {
-                const expiry = new Date(item.document.expiryDate);
-                expiry.setHours(0, 0, 0, 0);
-
-                const diffTime = expiry.getTime() - today.getTime();
-                const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-                let computedStatus = 'active';
-                if (daysRemaining < 0) {
-                    computedStatus = 'expired';
-                } else if (daysRemaining <= 30) {
-                    computedStatus = 'expiring_soon';
-                }
+                const { status: computedStatus, daysRemaining } = computeStatus(item.document.expiryDate, today);
 
                 docDetails = {
                     id: item.document.id,

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -45,7 +46,15 @@ const deleteFile = (filePath) => {
     }
 };
 
+/**
+ * Name for a newly uploaded file. A random UUID can't collide, unlike the old
+ * Date.now() suffix (two uploads in the same millisecond overwrote each other).
+ * Always .pdf: the original extension is user input and only PDFs are accepted.
+ */
+const makeUploadFilename = () => `document-${crypto.randomUUID()}.pdf`;
+
 module.exports = {
     saveFile,
-    deleteFile
+    deleteFile,
+    makeUploadFilename
 };
