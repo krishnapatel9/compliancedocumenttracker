@@ -1,17 +1,17 @@
 const { spawn } = require('child_process');
 
-console.log('[+] Starting DocShield ecosystem launcher using PNPM...');
+console.log('[+] Starting DocShield ecosystem launcher using npm workspaces...');
 
-const pnpmCmd = 'pnpm';
+const pnpmCmd = 'npm';
 
 // Start backend
-const backend = spawn(pnpmCmd, ['--filter', 'backend', 'dev'], {
+const backend = spawn(pnpmCmd, ['run', 'dev', '--workspace=backend'], {
     stdio: 'inherit',
     shell: true
 });
 
 // Start frontend
-const frontend = spawn(pnpmCmd, ['--filter', 'frontend', 'dev'], {
+const frontend = spawn(pnpmCmd, ['run', 'dev', '--workspace=frontend'], {
     stdio: 'inherit',
     shell: true
 });

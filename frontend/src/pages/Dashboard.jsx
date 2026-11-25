@@ -1,235 +1,212 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { formatDateTime, readJson } from '../utils/format';
+import StatusBadge from '../components/StatusBadge';
+
+const CATEGORY_LABELS = { license: 'Licences', certificate: 'Certificates', insurance: 'Insurance', contract: 'Contracts', permit: 'Permits', tax_document: 'Tax documents' };
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 function Dashboard() {
     const { authFetch } = useAuth();
+    const toast = useToast();
     const [stats, setStats] = useState(null);
-    const [imminentDocs, setImminentDocs] = useState([]);
+    const [attention, setAttention] = useState([]);
+    const [recentAlerts, setRecentAlerts] = useState([]);
+    const [alertHealth, setAlertHealth] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [scanning, setScanning] = useState(false);
     const [error, setError] = useState(null);
 
-    const loadDashboardData = async () => {
+    const load = useCallback(async () => {
         try {
-            setLoading(true);
-            // Fetch stats
-            const statsRes = await authFetch('/api/dashboard');
-            if (!statsRes.ok) throw new Error('Failed to fetch dashboard metrics');
-            const statsData = await statsRes.json();
-            setStats(statsData);
+            setError(null);
+            const [statsRes, expiredRes, soonRes, notifRes, healthRes] = await Promise.all([
+                authFetch('/api/dashboard'),
+                authFetch('/api/documents?limit=6&sort=expiryDate&order=desc&status=expired'),
+                authFetch('/api/documents?limit=6&sort=expiryDate&order=asc&status=expiring_soon'),
+                authFetch('/api/notifications'),
+                fetch('/api/health')
+            ]);
+            if (!statsRes.ok) throw new Error((await readJson(statsRes)).error || 'Could not load the overview');
+            setStats(await statsRes.json());
 
-            // Fetch document list for imminent danger queue sorted by days remaining
-            const docsRes = await authFetch('/api/documents?limit=100');
-            if (docsRes.ok) {
-                const docsData = await docsRes.json();
-                const items = docsData.items || [];
-                const sorted = [...items].sort((a, b) => a.daysRemaining - b.daysRemaining);
-                setImminentDocs(sorted.slice(0, 4));
-            }
+            const expired = expiredRes.ok ? (await expiredRes.json()).items || [] : [];
+            const soon = soonRes.ok ? (await soonRes.json()).items || [] : [];
+            setAttention([...expired, ...soon].slice(0, 8));
+            setRecentAlerts(notifRes.ok ? (await notifRes.json()).slice(0, 6) : []);
+            setAlertHealth(healthRes.ok ? (await readJson(healthRes)).alerts || null : null);
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
         }
+    }, [authFetch]);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { load(); }, []);
+
+    const runScan = async () => {
+        setScanning(true);
+        try {
+            const res = await authFetch('/api/services/cron/trigger', { method: 'POST' });
+            const result = await readJson(res);
+            if (!res.ok) {
+                const detail = result.error || (result.failed && result.failed[0] && result.failed[0].error) || `HTTP ${res.status}`;
+                throw new Error(`The scan did not complete: ${detail}`);
+            }
+            toast.success(`Scan complete: ${plural(result.sentCount, 'email', 'emails')} sent, ${result.skippedDuplicates.length} already sent.`);
+        } catch (err) {
+            toast.error(err.message);
+        } finally {
+            setScanning(false);
+            load();
+        }
     };
 
-    useEffect(() => {
-        loadDashboardData();
-    }, []);
-
-    if (loading) {
-        return (
-            <div className="state-loading" style={{ color: '#868e96', fontFamily: 'monospace' }}>
-                [+] SCANNING WORKSPACE DATABASE LAYERS ENGINE...
-            </div>
-        );
-    }
+    if (loading) return <p className="loading">Loading the register…</p>;
 
     if (error) {
         return (
-            <div className="alert-error" style={{ fontFamily: 'monospace' }}>
-                [-] SYSTEM FAULT DETECTED: {error}
+            <div className="notice error" role="alert">
+                {error}
+                <button className="btn secondary small" onClick={() => { setLoading(true); load(); }}>Try again</button>
             </div>
         );
     }
 
-    // Circular SVG progress math
-    const total = stats?.total || 0;
-    const expired = stats?.expired || 0;
-    const score = total > 0 ? Math.round(((total - expired) / total) * 100) : 100;
-    // Stroke calculation (circle radius 54, circumference = 2 * PI * r = ~339.3)
-    const circumference = 339.3;
-    const strokeDashOffset = circumference - (circumference * score) / 100;
+    const total = stats.total;
+    const expired = stats.expired;
+    const soon = stats.expiringSoon;
+    const active = stats.active;
+    const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const pct = (n) => (total > 0 ? (n / total) * 100 : 0);
+    const alertsFailing = Boolean(alertHealth && alertHealth.lastError);
+
+    let lede;
+    if (total === 0) {
+        lede = <>The register is empty. <Link to="/documents">Add the first document.</Link></>;
+    } else if (expired === 0 && soon === 0) {
+        lede = <>Everything is in date. <b>{plural(total, 'document', 'documents')}</b>, none expiring in the next 30 days.</>;
+    } else {
+        lede = (
+            <>
+                {expired > 0 && <><b className="late">{plural(expired, 'document has', 'documents have')} expired</b>{soon > 0 ? ' and ' : '.'}</>}
+                {soon > 0 && <><b className="soon">{plural(soon, 'expires', 'expire')}</b> within 30 days.</>}
+            </>
+        );
+    }
+
+    const categoryRows = Object.entries(stats.categories).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
 
     return (
-        <div className="dashboard-page">
-            <div className="dashboard-hero-grid">
-                {/* Left Card: Fleet status card */}
-                <div className="card fleet-card">
-                    <div className="fleet-card-header">
-                        <div>
-                            <span className="status-sys-label">SYSTEM FLAGS // Compliance Registry</span>
-                            <h2 className="fleet-title">Fleet Health</h2>
-                            <p className="dashboard-desc-compact">
-                                Aggregate index representing active nodes versus warning checkpoints.
-                            </p>
-                        </div>
-                        <span className="stability-pill">NOMINAL</span>
-                    </div>
+        <div>
+            <header className="page-head">
+                <div>
+                    <h1>Overview</h1>
+                    <p>{today}</p>
+                </div>
+                <div className="page-actions">
+                    <Link className="btn secondary" to="/documents">Open the register</Link>
+                </div>
+            </header>
 
-                    <div className="fleet-metrics-body">
-                        <div className="compliance-radial-gauge">
-                            <svg viewBox="0 0 120 120">
-                                <circle
-                                    cx="60"
-                                    cy="60"
-                                    r="54"
-                                    fill="none"
-                                    stroke="rgba(255, 255, 255, 0.03)"
-                                    strokeWidth="4"
-                                />
-                                <circle
-                                    cx="60"
-                                    cy="60"
-                                    r="54"
-                                    fill="none"
-                                    stroke="url(#radialGaugeGrad)"
-                                    strokeWidth="4"
-                                    strokeDasharray={circumference}
-                                    strokeDashoffset={strokeDashOffset}
-                                    strokeLinecap="round"
-                                />
-                                <defs>
-                                    <linearGradient id="radialGaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                                        <stop offset="0%" stopColor="#4c6ef5" />
-                                        <stop offset="100%" stopColor="#22b8cf" />
-                                    </linearGradient>
-                                </defs>
-                            </svg>
-                            <div className="gauge-value">
-                                <span>{score}</span>
-                                <span className="gauge-percent-symbol">SCORE</span>
-                            </div>
-                        </div>
+            <p className="lede">{lede}</p>
 
-                        <div className="fleet-stats-notes">
-                            <p className="fleet-notes-text">
-                                The DocShield safety score is calculated dynamically based on actively verified evidence nodes. Expired documentation triggers notifications immediately.
-                            </p>
-                            <div className="fleet-mini-cards">
-                                <div className="mini-card">
-                                    <span className="mini-card-label">ACTIVE NODES</span>
-                                    <div className="mini-card-value">{total - expired}</div>
-                                </div>
-                                <div className="mini-card" style={{ borderColor: expired > 0 ? 'rgba(201, 42, 42, 0.3)' : 'var(--border-color)' }}>
-                                    <span className="mini-card-label" style={{ color: expired > 0 ? 'var(--error-text)' : 'inherit' }}>EXPIRED</span>
-                                    <div className="mini-card-value" style={{ color: expired > 0 ? 'var(--error-text)' : 'inherit' }}>{expired}</div>
-                                </div>
-                            </div>
-                        </div>
+            {total > 0 && (
+                <div role="img" aria-label={`${expired} expired, ${soon} expiring within 30 days, ${active} in date`}>
+                    <div className="spread">
+                        {expired > 0 && <span className="late" style={{ flexBasis: `${pct(expired)}%` }} />}
+                        {soon > 0 && <span className="soon" style={{ flexBasis: `${pct(soon)}%` }} />}
+                        {active > 0 && <span className="ok" style={{ flexBasis: `${pct(active)}%` }} />}
                     </div>
                 </div>
+            )}
 
-                {/* Right Card: Life activity feed logs */}
-                <div className="card feed-card">
-                    <h3>
-                        <span>SYSTEM_ACTIVITY_FEED</span>
-                        <span className="feed-pulse"></span>
-                    </h3>
-                    <div className="feed-list">
-                        <div className="feed-item">
-                            <span className="feed-time">09:41:22</span>
-                            <p className="feed-content">Daily expiry cron check: complete validation loop</p>
-                            <span className="feed-tag">CRON_SERVICE</span>
-                        </div>
-                        <div className="feed-item">
-                            <span className="feed-time">08:35:10</span>
-                            <p className="feed-content">Database connection pool refreshed successfully</p>
-                            <span className="feed-tag">POSTGRES_DB</span>
-                        </div>
-                        <div className="feed-item">
-                            <span className="feed-time">07:11:05</span>
-                            <p className="feed-content">Admin session token validated</p>
-                            <span className="feed-tag">JWT_AUTH</span>
-                        </div>
-                        <div className="feed-item">
-                            <span className="feed-time">00:01:00</span>
-                            <p className="feed-content">Scanned {total} documents for active warning flags</p>
-                            <span className="feed-tag">COMPLIANCE_ENGINE</span>
-                        </div>
+            <dl className="figures">
+                <div className="figure"><dt><span className="swatch late" />Expired</dt><dd>{expired}</dd><small>Need renewal now</small></div>
+                <div className="figure"><dt><span className="swatch soon" />Expiring within 30 days</dt><dd>{soon}</dd><small>{stats.expiring7d} within 7 days</small></div>
+                <div className="figure"><dt><span className="swatch ok" />In date</dt><dd>{active}</dd><small>More than 30 days left</small></div>
+                <div className="figure"><dt><span className="swatch all" />Total registered</dt><dd>{total}</dd><small>{stats.healthRate}% not expired</small></div>
+            </dl>
+
+            <div className="split">
+                <section className="panel">
+                    <div className="panel-head">
+                        <h2>Needs attention</h2>
+                        <Link to="/documents">All documents</Link>
                     </div>
-                    <button className="btn-feed-footer" onClick={loadDashboardData}>
-                        FORCE MANUAL RUN // SCAN NOW
-                    </button>
-                </div>
+                    {attention.length === 0 ? (
+                        <div className="empty"><strong>Nothing needs attention</strong>No document is expired or expiring within 30 days.</div>
+                    ) : (
+                        <div className="table-wrap">
+                            <table className="table">
+                                <thead><tr><th>Document</th><th>Status</th><th className="hide-sm">Reminder goes to</th></tr></thead>
+                                <tbody>
+                                    {attention.map((doc) => (
+                                        <tr key={doc.id}>
+                                            <td>
+                                                <Link to={`/documents?open=${doc.id}`} className="cell-title" style={{ textDecoration: 'none' }}>{doc.title}</Link>
+                                                <div className="cell-sub">{CATEGORY_LABELS[doc.category] || doc.category}</div>
+                                            </td>
+                                            <td><StatusBadge status={doc.status} days={doc.daysRemaining} /></td>
+                                            <td className="hide-sm">{doc.notifyEmail}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </section>
+
+                <section className="panel">
+                    <div className="panel-head">
+                        <h2>Recent reminders</h2>
+                        <Link to="/warnings">Full log</Link>
+                    </div>
+                    {recentAlerts.length === 0 ? (
+                        <div className="empty"><strong>No reminders sent yet</strong>They go out at 30, 15 and 7 days before expiry.</div>
+                    ) : (
+                        <ul className="feed">
+                            {recentAlerts.map((n) => (
+                                <li key={n.id}>
+                                    <span>{n.document ? n.document.title : 'Document'}: {n.daysBefore === 0 ? 'expiry notice' : `${n.daysBefore}-day warning`}</span>
+                                    <span className="who">to {n.document ? n.document.notifyEmail : 'recipient'}</span>
+                                    <span className="when">{formatDateTime(n.sentAt)}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                    <div className={`scan-line ${alertsFailing ? 'bad' : ''}`}>
+                        <span>
+                            {alertsFailing
+                                ? `Last scan reported a problem: ${alertHealth.lastError}`
+                                : alertHealth && alertHealth.lastSuccessAt
+                                    ? `Last successful scan ${formatDateTime(alertHealth.lastSuccessAt)}`
+                                    : 'No scan has completed since the server started'}
+                        </span>
+                        <button className="btn secondary small" onClick={runScan} disabled={scanning}>{scanning ? 'Scanning…' : 'Run scan'}</button>
+                    </div>
+                </section>
             </div>
 
-            <div className="dashboard-bottom-grid">
-                {/* Category distribution chart segment */}
-                <div className="card">
-                    <h3>Distribution by Category</h3>
-                    <div className="bars-list">
-                        {stats && Object.entries(stats.categories).map(([cat, count]) => {
-                            const percentage = stats.total > 0 ? (count / stats.total) * 100 : 0;
-                            return (
-                                <div key={cat} className="category-bar-row">
-                                    <div className="bar-info">
-                                        <span className="bar-name">{cat.replace('_', ' ')}</span>
-                                        <span className="bar-count">{count} Nodes ({Math.round(percentage)}%)</span>
-                                    </div>
-                                    <div className="progress-bg">
-                                        <div className="progress-fill" style={{ width: `${percentage}%` }}></div>
-                                    </div>
+            <section className="panel">
+                <div className="panel-head"><h2>By category</h2><span className="note">{plural(total, 'document', 'documents')}</span></div>
+                <div className="panel-body">
+                    {categoryRows.length === 0 ? <p className="note">No documents yet.</p> : (
+                        <div className="bars">
+                            {categoryRows.map(([key, n]) => (
+                                <div className="bar-row" key={key}>
+                                    <span>{CATEGORY_LABELS[key] || key}</span>
+                                    <div className="bar-track"><div className="bar-fill" style={{ width: `${pct(n)}%` }} /></div>
+                                    <span className="v">{n} ({Math.round(pct(n))}%)</span>
                                 </div>
-                            );
-                        })}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
-
-                {/* Imminent action queue */}
-                <div className="card">
-                    <h3>Imminent Actions Queue</h3>
-                    <div className="imminent-list">
-                        {imminentDocs.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'monospace' }}>
-                                LIST_EMPTY: No documents registered.
-                            </p>
-                        ) : (
-                            imminentDocs.map((doc) => {
-                                const isExpired = doc.daysRemaining < 0;
-                                const isWarning = doc.daysRemaining >= 0 && doc.daysRemaining <= 30;
-                                let statusClass = 'active-ok';
-                                let textLabel = 'VERIFIED';
-                                if (isExpired) {
-                                    statusClass = 'expired-high';
-                                    textLabel = `EXPIRED (${Math.abs(doc.daysRemaining)}D AGO)`;
-                                } else if (isWarning) {
-                                    statusClass = 'expiring-warn';
-                                    textLabel = `EXPIRES IN ${doc.daysRemaining}D`;
-                                } else {
-                                    textLabel = `ACTIVE (${doc.daysRemaining}D LEFT)`;
-                                }
-
-                                return (
-                                    <div className="imminent-item" key={doc.id}>
-                                        <div className="imminent-left">
-                                            <span className="imminent-icon">
-                                                {doc.category === 'license' ? '📄' : '🛡️'}
-                                            </span>
-                                            <div className="imminent-info">
-                                                <span className="imminent-title">{doc.title}</span>
-                                                <span className="imminent-sub">{doc.notifyEmail}</span>
-                                            </div>
-                                        </div>
-                                        <span className={`imminent-right ${statusClass}`}>
-                                            {textLabel}
-                                        </span>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                </div>
-            </div>
+            </section>
         </div>
     );
 }

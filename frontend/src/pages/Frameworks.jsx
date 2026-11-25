@@ -1,30 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { readJson } from '../utils/format';
+import StatusBadge from '../components/StatusBadge';
+
+const FRAMEWORKS = [['SOC2', 'SOC 2'], ['ISO27001', 'ISO 27001'], ['GDPR', 'GDPR']];
 
 function Frameworks() {
     const { authFetch } = useAuth();
+    const toast = useToast();
     const [controls, setControls] = useState([]);
     const [documents, setDocuments] = useState([]);
     const [selectedFramework, setSelectedFramework] = useState('SOC2');
+    const [picks, setPicks] = useState({});          // controlCode -> chosen document id
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [linkLoading, setLinkLoading] = useState(null); // stores controlCode for linking
+    const [busy, setBusy] = useState(null);          // controlCode being saved
 
     const fetchData = async () => {
-        setLoading(true);
         setError('');
         try {
-            // Fetch controls
             const controlsRes = await authFetch('/api/frameworks');
-            if (!controlsRes.ok) throw new Error('Failed to fetch framework controls');
-            const controlsData = await controlsRes.json();
-            setControls(controlsData);
+            if (!controlsRes.ok) throw new Error((await readJson(controlsRes)).error || 'Could not load the controls');
+            setControls(await controlsRes.json());
 
-            // Fetch all documents for linking dropdown
-            const documentsRes = await authFetch('/api/documents?limit=100');
-            if (!documentsRes.ok) throw new Error('Failed to fetch inventory documents');
-            const documentsData = await documentsRes.json();
-            setDocuments(documentsData.items || documentsData.documents || []);
+            const docsRes = await authFetch('/api/documents?limit=100&sort=title&order=asc');
+            if (!docsRes.ok) throw new Error((await readJson(docsRes)).error || 'Could not load the documents');
+            setDocuments((await docsRes.json()).items || []);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -32,204 +34,89 @@ function Frameworks() {
         }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { fetchData(); }, []);
 
     const handleLink = async (controlCode, documentId) => {
-        setLinkLoading(controlCode);
+        setBusy(controlCode);
         try {
             const res = await authFetch('/api/frameworks/link', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    framework: selectedFramework,
-                    controlCode,
-                    documentId: documentId || null
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ framework: selectedFramework, controlCode, documentId: documentId || null })
             });
-
-            if (!res.ok) throw new Error('Failed to save mapping');
-
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Could not save the link');
+            setPicks((p) => ({ ...p, [controlCode]: '' }));
             await fetchData();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         } finally {
-            setLinkLoading(null);
+            setBusy(null);
         }
     };
 
-    const filteredControls = controls.filter(c => c.framework === selectedFramework);
+    const shown = controls.filter((c) => c.framework === selectedFramework);
+    const covered = shown.filter((c) => c.document).length;
+    const gaps = shown.filter((c) => c.document && c.document.status !== 'active').length;
 
     return (
-        <div className="page-container animate-fade-in" style={{ padding: '2rem', color: '#f1f3f5' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+        <div>
+            <header className="page-head">
                 <div>
-                    <h1 style={{ fontSize: '1.8rem', fontWeight: 600, color: '#fff', margin: 0 }}>Compliance Frameworks</h1>
-                    <p style={{ color: '#868e96', fontSize: '0.9rem', marginTop: '0.25rem' }}>Map inventory documents to active international controls checklist requirements.</p>
+                    <h1>Frameworks</h1>
+                    <p>Attach a document as evidence for each control. A control is only as good as its document: one that expires leaves the control exposed.</p>
                 </div>
+            </header>
 
-                <div className="framework-selector-tabs" style={{ display: 'flex', gap: '0.5rem', backgroundColor: '#090f18', padding: '4px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    {['SOC2', 'ISO27001', 'GDPR'].map(fw => (
-                        <button
-                            key={fw}
-                            onClick={() => setSelectedFramework(fw)}
-                            style={{
-                                border: 'none',
-                                background: selectedFramework === fw ? '#101726' : 'transparent',
-                                color: selectedFramework === fw ? '#4c6ef5' : '#868e96',
-                                padding: '0.5rem 1.2rem',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontWeight: 550,
-                                transition: 'all 0.2s',
-                                border: selectedFramework === fw ? '1px solid rgba(255,255,255,0.08)' : '1px solid transparent'
-                            }}
-                        >
-                            {fw === 'SOC2' ? 'SOC 2 Type II' : fw === 'ISO27001' ? 'ISO 27001' : 'GDPR'}
-                        </button>
-                    ))}
-                </div>
+            <div className="tabs" role="tablist">
+                {FRAMEWORKS.map(([key, label]) => (
+                    <button key={key} role="tab" className="tab" aria-selected={selectedFramework === key} onClick={() => setSelectedFramework(key)}>{label}</button>
+                ))}
             </div>
 
             {loading ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}>
-                    <div className="spinner"></div>
-                </div>
+                <p className="loading">Loading controls…</p>
             ) : error ? (
-                <div style={{ border: '1px solid #fa5252', padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(250,82,82,0.05)', color: '#fa5252', margin: '2rem 0' }}>
-                    <strong>Fetch error:</strong> {error}
-                </div>
+                <div className="notice error" role="alert">{error}<button className="btn secondary small" onClick={fetchData}>Try again</button></div>
             ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {filteredControls.map(ctrl => {
-                        const isMapped = !!ctrl.document;
-                        const doc = ctrl.document;
+                <>
+                    <div className="fw-summary">
+                        <span><strong style={{ color: 'var(--page-text)' }}>{covered} of {shown.length}</strong> controls have evidence{gaps > 0 ? `, ${gaps} with a document that is expired or expiring` : ''}</span>
+                        <div className="bar-track" role="img" aria-label={`${covered} of ${shown.length} controls covered`}><div className="bar-fill" style={{ width: `${shown.length ? (covered / shown.length) * 100 : 0}%` }} /></div>
+                    </div>
 
-                        return (
-                            <div
-                                key={ctrl.controlCode}
-                                style={{
-                                    backgroundColor: '#090f18',
-                                    border: '1px solid rgba(255, 255, 255, 0.05)',
-                                    borderRadius: '8px',
-                                    padding: '1.25rem',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    gap: '2rem',
-                                    transition: 'border-color 0.25s',
-                                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.borderColor = 'rgba(76, 110, 245, 0.2)'}
-                                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)'}
-                            >
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
-                                        <span style={{
-                                            fontFamily: 'monospace',
-                                            fontSize: '0.85rem',
-                                            backgroundColor: '#101726',
-                                            padding: '2px 6px',
-                                            borderRadius: '4px',
-                                            color: '#4c6ef5',
-                                            border: '1px solid rgba(76,110,245,0.15)'
-                                        }}>{ctrl.controlCode}</span>
-                                        <h3 style={{ margin: 0, fontSize: '1rem', color: '#fff', fontWeight: 550 }}>{ctrl.name}</h3>
+                    <section className="panel">
+                        {shown.map((ctrl) => {
+                            const saving = busy === ctrl.controlCode;
+                            return (
+                                <div className="control" key={ctrl.controlCode}>
+                                    <span className="code">{ctrl.controlCode}</span>
+                                    <div>
+                                        <h3>{ctrl.name}</h3>
+                                        <p>{ctrl.description}</p>
                                     </div>
-                                    <p style={{ margin: 0, color: '#868e96', fontSize: '0.85rem', lineHeight: '1.4' }}>{ctrl.description}</p>
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: '400px', justifyContent: 'flex-end' }}>
-                                    {isMapped ? (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', backgroundColor: '#101726', padding: '0.5rem 1rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', width: '100%', justifyContent: 'space-between' }}>
-                                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
-                                                <div style={{ color: '#fff', fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.title}</div>
-                                                <span style={{
-                                                    fontSize: '0.75rem',
-                                                    color: doc.status === 'expired' ? '#fa5252' : doc.status === 'expiring_soon' ? '#fd7e14' : '#40c057',
-                                                    fontWeight: 650,
-                                                    textTransform: 'uppercase'
-                                                }}>
-                                                    ● {doc.status === 'expiring_soon' ? 'expiring soon' : doc.status}
-                                                </span>
+                                    {ctrl.document ? (
+                                        <div className="evidence">
+                                            <div className="evidence-doc">
+                                                <strong title={ctrl.document.title}>{ctrl.document.title}</strong>
+                                                <StatusBadge status={ctrl.document.status} days={ctrl.document.daysRemaining} />
                                             </div>
-
-                                            <button
-                                                onClick={() => handleLink(ctrl.controlCode, null)}
-                                                disabled={linkLoading === ctrl.controlCode}
-                                                style={{
-                                                    backgroundColor: 'transparent',
-                                                    border: 'none',
-                                                    color: '#fa5252',
-                                                    cursor: 'pointer',
-                                                    fontSize: '0.8rem',
-                                                    padding: '0.25rem 0.5rem',
-                                                    borderRadius: '4px',
-                                                    transition: 'background-color 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(250,82,82,0.1)'}
-                                                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                                            >
-                                                {linkLoading === ctrl.controlCode ? 'Unlinking...' : 'Unlink'}
-                                            </button>
+                                            <button className="link-btn danger" onClick={() => handleLink(ctrl.controlCode, null)} disabled={saving}>{saving ? 'Removing…' : 'Remove'}</button>
                                         </div>
                                     ) : (
-                                        <div style={{ display: 'flex', gap: '0.5rem', width: '100%', alignItems: 'center' }}>
-                                            <select
-                                                id={`select-${ctrl.controlCode}`}
-                                                defaultValue=""
-                                                style={{
-                                                    flex: 1,
-                                                    backgroundColor: '#101726',
-                                                    border: '1px solid rgba(255,255,255,0.08)',
-                                                    color: '#e1e3e5',
-                                                    fontSize: '0.85rem',
-                                                    padding: '0.5rem',
-                                                    borderRadius: '6px',
-                                                    outline: 'none',
-                                                    cursor: 'pointer'
-                                                }}
-                                            >
-                                                <option value="" disabled>Choose compliance document...</option>
-                                                {documents.map(d => (
-                                                    <option key={d.id} value={d.id}>{d.title} ({d.category})</option>
-                                                ))}
+                                        <div className="evidence">
+                                            <select className="select" aria-label={`Evidence for ${ctrl.controlCode}`} value={picks[ctrl.controlCode] || ''} onChange={(e) => setPicks((p) => ({ ...p, [ctrl.controlCode]: e.target.value }))}>
+                                                <option value="">Choose a document</option>
+                                                {documents.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}
                                             </select>
-
-                                            <button
-                                                onClick={() => {
-                                                    const select = document.getElementById(`select-${ctrl.controlCode}`);
-                                                    if (select.value) {
-                                                        handleLink(ctrl.controlCode, select.value);
-                                                    }
-                                                }}
-                                                disabled={linkLoading === ctrl.controlCode}
-                                                style={{
-                                                    backgroundColor: '#4c6ef5',
-                                                    border: 'none',
-                                                    color: '#fff',
-                                                    padding: '0.5rem 1rem',
-                                                    borderRadius: '6px',
-                                                    cursor: 'pointer',
-                                                    fontSize: '0.85rem',
-                                                    fontWeight: 550,
-                                                    transition: 'filter 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => e.target.style.filter = 'brightness(1.1)'}
-                                                onMouseLeave={(e) => e.target.style.filter = 'brightness(1)'}
-                                            >
-                                                {linkLoading === ctrl.controlCode ? 'Linking...' : 'Link'}
-                                            </button>
+                                            <button className="btn small" disabled={!picks[ctrl.controlCode] || saving} onClick={() => handleLink(ctrl.controlCode, picks[ctrl.controlCode])}>{saving ? 'Saving…' : 'Attach'}</button>
                                         </div>
                                     )}
                                 </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                            );
+                        })}
+                    </section>
+                </>
             )}
         </div>
     );

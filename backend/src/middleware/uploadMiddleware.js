@@ -1,34 +1,20 @@
 const multer = require('multer');
-const { makeUploadFilename } = require('../utils/storage');
-const path = require('path');
-const fs = require('fs');
 
-const uploadDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, makeUploadFilename());
-    }
-});
-
+// Files stay in memory and go straight into Postgres (see DocumentFile in schema.prisma).
 const fileFilter = (req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
         cb(null, true);
     } else {
-        cb(new Error('PDF files only are allowed (application/pdf)'), false);
+        const err = new Error('PDF files only are allowed (application/pdf)');
+        err.code = 'INVALID_FILE_TYPE';
+        cb(err, false);
     }
 };
 
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     fileFilter,
-    limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 } // 5MB
 });
 
 module.exports = upload;

@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: compliance-document-tracker-api
+    runtime: node
+    rootDir: .
+    buildCommand: npm ci
+    startCommand: npm run start:prod --workspace=backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: RETENTION_DAYS
+        value: "30"
+      - key: TRUST_PROXY
+        value: "2"          # verify by logging req.ip on the live site
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false

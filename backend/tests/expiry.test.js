@@ -8,7 +8,6 @@ const assert = require('node:assert/strict');
 const { toDateOnly, todayDateOnly, addDays, daysBetween, formatDateOnly } = require('../src/utils/dates');
 const { computeStatus, statusWhere } = require('../src/utils/documentStatus');
 const { pickThreshold, buildEmail } = require('../src/services/expiryRules');
-const { makeUploadFilename } = require('../src/utils/storage');
 
 // --- A-1: calendar dates never shift with the server's time zone ----------
 
@@ -73,6 +72,8 @@ test('pickThreshold returns the most urgent threshold crossed', () => {
     assert.equal(pickThreshold(31), null);
     assert.equal(pickThreshold(30), 30);
     assert.equal(pickThreshold(20), 30); // uploaded late or cron missed day 30
+    assert.equal(pickThreshold(15), 15);
+    assert.equal(pickThreshold(10), 15);
     assert.equal(pickThreshold(7), 7);
     assert.equal(pickThreshold(5), 7);   // uploaded with 5 days left still gets warned
     assert.equal(pickThreshold(0), 0);
@@ -98,14 +99,15 @@ test('expiry emails describe the real timing', () => {
     assert.match(buildEmail(doc, 30, 20).text, /Expiry Date:  2026-11-26/);
 });
 
-// --- A-4: upload filenames are unique ------------------------------------
+// --- Audit date filters use business-time-zone days, not UTC days -----------
 
-test('upload filenames are random UUIDs, not Date.now() + a constant', () => {
-    const names = new Set();
-    for (let i = 0; i < 1000; i++) {
-        const name = makeUploadFilename();
-        assert.match(name, /^document-[0-9a-f-]{36}\.pdf$/);
-        names.add(name);
-    }
-    assert.equal(names.size, 1000); // all generated in the same few milliseconds
+const { zonedDayStart } = require('../src/utils/dates');
+
+test('zonedDayStart returns the instant a local calendar day begins', () => {
+    assert.equal(zonedDayStart('2026-11-25', 'Asia/Kolkata').toISOString(), '2026-11-24T18:30:00.000Z');
+    assert.equal(zonedDayStart('2026-11-25', 'UTC').toISOString(), '2026-11-25T00:00:00.000Z');
+    // New York: EST (UTC-5) before the March change, EDT (UTC-4) after it
+    assert.equal(zonedDayStart('2026-03-08', 'America/New_York').toISOString(), '2026-03-08T05:00:00.000Z');
+    assert.equal(zonedDayStart('2026-03-09', 'America/New_York').toISOString(), '2026-03-09T04:00:00.000Z');
+    assert.equal(zonedDayStart('not a date', 'UTC'), null);
 });

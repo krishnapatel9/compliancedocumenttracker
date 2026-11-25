@@ -5,6 +5,10 @@
       "destination": "https://compliancedocumenttracker.onrender.com/api/:path*"
     },
     {
+      "source": "/api-docs/:path*",
+      "destination": "https://compliancedocumenttracker.onrender.com/api-docs/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

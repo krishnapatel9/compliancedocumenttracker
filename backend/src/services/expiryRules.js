@@ -4,7 +4,7 @@
 const { formatDateOnly } = require('../utils/dates');
 
 // Warning thresholds in days before expiry. 0 means "expired or expires today".
-const THRESHOLDS = [30, 7, 0];
+const THRESHOLDS = [30, 15, 7, 0];
 
 /**
  * The most urgent threshold a document has crossed, or null if it is not yet due.

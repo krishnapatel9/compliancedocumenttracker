@@ -1,5 +1,6 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { z } = require('zod');
+const prisma = require('../db');
+const { actorFrom, record } = require('../services/audit');
 const { todayDateOnly } = require('../utils/dates');
 const { computeStatus } = require('../utils/documentStatus');
 
@@ -102,7 +103,7 @@ const STATIC_CONTROLS = [
 /**
  * Get all controls merged with active document links from the database
  */
-const getFrameworkControls = async (req, res) => {
+const getFrameworkControls = async (req, res, next) => {
     try {
         const linkedControls = await prisma.frameworkControl.findMany({
             include: {
@@ -117,7 +118,7 @@ const getFrameworkControls = async (req, res) => {
             const key = `${item.framework}-${item.controlCode}`;
 
             let docDetails = null;
-            if (item.document) {
+            if (item.document && !item.document.deletedAt) {
                 const { status: computedStatus, daysRemaining } = computeStatus(item.document.expiryDate, today);
 
                 docDetails = {
@@ -149,69 +150,74 @@ const getFrameworkControls = async (req, res) => {
 
         res.status(200).json(mergedControls);
     } catch (error) {
-        console.error('Error fetching framework controls:', error);
-        res.status(500).json({ error: 'Server error fetching frameworks data', details: error.message });
+        next(error);
     }
 };
 
-/**
- * Link a document to a framework control
- */
-const linkDocumentToControl = async (req, res) => {
-    const { framework, controlCode, documentId } = req.body;
+const linkSchema = z.object({
+    framework: z.string().min(1),
+    controlCode: z.string().min(1),
+    documentId: z.uuid().nullable().optional()
+});
 
-    if (!framework || !controlCode) {
-        return res.status(400).json({ error: 'Validation failed', details: { framework: 'Framework and controlCode are required.' } });
+/**
+ * Link (or unlink, with documentId null) a document to a framework control.
+ * Only controls from the catalog above can be linked.
+ */
+const linkDocumentToControl = async (req, res, next) => {
+    const parsed = linkSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: 'Validation failed', details: z.flattenError(parsed.error).fieldErrors });
+    }
+    const { framework, controlCode, documentId } = parsed.data;
+
+    const control = STATIC_CONTROLS.find((c) => c.framework === framework && c.controlCode === controlCode);
+    if (!control) {
+        return res.status(400).json({ error: 'Validation failed', details: { controlCode: ['Unknown framework control'] } });
     }
 
     try {
-        // Validate if document exists (if documentId is provided)
-        if (documentId) {
-            const doc = await prisma.document.findUnique({
-                where: { id: documentId }
-            });
-            if (!doc) {
-                return res.status(404).json({ error: 'Document not found' });
+        const result = await prisma.$transaction(async (tx) => {
+            let doc = null;
+            if (documentId) {
+                doc = await tx.document.findFirst({ where: { id: documentId, deletedAt: null }, select: { id: true, title: true } });
+                if (!doc) return { notFound: true };
             }
-        }
 
-        // Find existing mapper
-        const existing = await prisma.frameworkControl.findFirst({
-            where: { framework, controlCode }
+            const previous = await tx.frameworkControl.findUnique({
+                where: { framework_controlCode: { framework, controlCode } },
+                include: { document: { select: { id: true, title: true } } }
+            });
+
+            const data = { documentId: documentId || null, linkedAt: documentId ? new Date() : null };
+            const saved = await tx.frameworkControl.upsert({
+                where: { framework_controlCode: { framework, controlCode } },
+                update: data,
+                create: { framework, controlCode, name: control.name, description: control.description, ...data },
+                include: { document: { select: { id: true, title: true, category: true, expiryDate: true } } }
+            });
+
+            const previousDoc = previous && previous.document;
+            if (doc) {
+                await record(tx, actorFrom(req), {
+                    action: 'FRAMEWORK_LINKED', entityType: 'framework_control', entityId: saved.id,
+                    documentTitle: doc.title,
+                    details: { framework, controlCode, documentId: doc.id, replacedDocumentId: previousDoc && previousDoc.id !== doc.id ? previousDoc.id : null }
+                });
+            } else if (previousDoc) {
+                await record(tx, actorFrom(req), {
+                    action: 'FRAMEWORK_UNLINKED', entityType: 'framework_control', entityId: saved.id,
+                    documentTitle: previousDoc.title,
+                    details: { framework, controlCode, documentId: previousDoc.id }
+                });
+            }
+            return { saved };
         });
 
-        let result;
-        if (existing) {
-            result = await prisma.frameworkControl.update({
-                where: { id: existing.id },
-                data: {
-                    documentId: documentId || null,
-                    linkedAt: documentId ? new Date() : null
-                },
-                include: {
-                    document: true
-                }
-            });
-        } else {
-            result = await prisma.frameworkControl.create({
-                data: {
-                    framework,
-                    controlCode,
-                    name: STATIC_CONTROLS.find(c => c.framework === framework && c.controlCode === controlCode)?.name || 'Standard Control',
-                    description: STATIC_CONTROLS.find(c => c.framework === framework && c.controlCode === controlCode)?.description || '',
-                    documentId: documentId || null,
-                    linkedAt: documentId ? new Date() : null
-                },
-                include: {
-                    document: true
-                }
-            });
-        }
-
-        res.status(200).json(result);
+        if (result.notFound) return res.status(404).json({ error: 'Document not found' });
+        return res.status(200).json(result.saved);
     } catch (error) {
-        console.error('Error linking document to control:', error);
-        res.status(500).json({ error: 'Server error linking document to control', details: error.message });
+        return next(error);
     }
 };
 

@@ -32,6 +32,8 @@ This is an MVP built to demonstrate backend engineering competency for a job app
 
 ## 2. Tech Stack
 
+> **Update (Nov 2026):** the tech-stack, file-handling, notification-key and reminder-job text above was revised to match the implementation. Three tables became four (`document_files`), reminders gained a 0-day (expired) alert, and Docker was removed from the project. Deleting is now a soft delete (trash, restorable for 30 days) and every change is recorded in an append-only audit trail; the PRD's "hard delete" and "no audit" simplifications no longer apply. See `docs/ARCHITECTURE.md`.
+
 | Layer | Technology |
 |---|---|
 | Database | PostgreSQL |
@@ -39,13 +41,13 @@ This is an MVP built to demonstrate backend engineering competency for a job app
 | Backend | Node.js + Express |
 | Frontend | React |
 | Auth | JWT (single admin user) |
-| File Upload | Multer (local disk storage for MVP) |
+| File Upload | Multer (memory) with the PDF stored in Postgres (`document_files`) |
 | Scheduler | node-cron |
 | Email | Nodemailer |
 | Validation | Zod |
 | API Docs | Swagger / OpenAPI |
-| Containerization | Docker + docker-compose |
-| Deployment | Render / Railway |
+| Local database | Any Postgres 15+ (the repo provides `npm run db:local` via embedded-postgres in the owner's setup) |
+| Deployment | Render (API, Node runtime) + Vercel (frontend) + Neon/Supabase (Postgres) |
 
 ---
 
@@ -97,7 +99,8 @@ else                          → active
 |---|---|---|
 | id | UUID / Serial | Primary key |
 | document_id | FK → documents.id | |
-| days_before | Integer | One of: 30, 15, 7 |
+| expiry_date | Date | The expiry date the warning was for; renewing starts a new cycle |
+| days_before | Integer | One of: 30, 15, 7, 0 (0 = expired or expires today) |
 | sent_at | Timestamp | |
 
 Purpose: prevents duplicate reminder emails for the same milestone on the same document.
@@ -148,14 +151,14 @@ Implemented via SQL `GROUP BY` / `COUNT`, not application-side looping — this 
 ### 5.6 Email Reminder System
 - `node-cron` job runs once daily (midnight)
 - Job logic:
-  1. Query all documents where `days_remaining` ∈ {30, 15, 7}
-  2. For each match, check `notifications` table — has this `document_id` + `days_before` combination already been sent?
-  3. If not sent, send email via Nodemailer to `notify_email`, then insert a row into `notifications`
+  1. Query all documents inside the widest window (30 days) or already expired, and pick the most urgent threshold each has crossed (30, 15, 7, 0). State-based, so a missed run or late upload is still warned
+  2. Claim the warning by inserting a `notifications` row keyed on (`document_id`, `expiry_date`, `days_before`); the unique key makes concurrent scans safe
+  3. If the claim succeeded, send via Nodemailer to `notify_email`; on failure release the claim so the next scan retries. Production never falls back to a console mock
 - Email content: document title, category, expiry date, days remaining
 
 ### 5.7 File Handling
 - Accept PDF only, max size limit (e.g. 5MB) enforced via Multer config
-- Files stored on local disk under `/uploads`, path saved in `file_path` column
+- Files are stored as bytes in the `document_files` table (one row per document, cascade delete); hosts with ephemeral disks lose local files. The PDF is verified by its `%PDF` magic bytes, not only the client's MIME type
 - Serve file via authenticated download endpoint (not static public folder)
 
 ---
@@ -195,7 +198,7 @@ Enforced via Zod schemas at the API boundary:
 - **Logging:** request logging via middleware (e.g. `morgan`) for basic observability
 - **API documentation:** Swagger UI available at `/api-docs`
 - **Environment config:** `.env` for DB URL, JWT secret, email credentials — never hardcoded
-- **Containerization:** `docker-compose.yml` running app + Postgres for one-command local setup
+- **Setup:** npm workspaces (`npm install`, `npm run dev`) against any Postgres; no Docker (replaced Nov 2026)
 
 ---
 
@@ -206,7 +209,7 @@ Enforced via Zod schemas at the API boundary:
 | 1 | 1–2 | Prisma schema, migrations, seed script, JWT auth, document CRUD + file upload |
 | 2 | 3–4 | Status computation logic, dashboard aggregation endpoint, search/filter/pagination |
 | 3 | 5–6 | node-cron reminder job, Nodemailer integration, notifications dedup logic |
-| 4 | 7 | Swagger docs, Dockerization, deployment, README with ER diagram and setup instructions |
+| 4 | 7 | Swagger docs, deployment, README with ER diagram and setup instructions |
 
 Estimated: ~1 week full-time, ~2 weeks part-time.
 
@@ -219,10 +222,10 @@ Estimated: ~1 week full-time, ~2 weeks part-time.
 - [ ] Status (active / expiring_soon / expired) is correctly computed on every fetch
 - [ ] Dashboard returns accurate aggregate counts
 - [ ] Search, category filter, status filter, and pagination all work together
-- [ ] Daily cron job sends reminder emails at 30/15/7 day marks without duplicating sends
-- [ ] All endpoints documented in Swagger
-- [ ] App runs via `docker-compose up` with one command
-- [ ] README includes setup steps, ER diagram, and a short project write-up suitable for a resume/portfolio link
+- [x] Daily cron job sends reminder emails at 30/15/7 day marks (plus an expired alert) without duplicating sends
+- [x] All endpoints documented in Swagger (enforced by `backend/tests/openapi.test.js`)
+- [x] App runs locally with `npm install` and `npm run dev` (Docker removed by decision)
+- [x] README includes setup steps and an ER diagram; the project write-up is `docs/project_report.md`
 
 ---
 

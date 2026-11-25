@@ -50,6 +50,26 @@ const todayDateOnly = (now = new Date(), timeZone = businessTimeZone()) => {
     return toDateOnly(ymd);
 };
 
+/** Offset (ms) of `timeZone` from UTC at the given instant. */
+const tzOffsetMs = (date, timeZone) => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(date);
+    const get = (type) => Number(parts.find((p) => p.type === type).value);
+    const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+    return asUtc - Math.floor(date.getTime() / 1000) * 1000;
+};
+
+/** The instant a calendar day ('YYYY-MM-DD') starts in `timeZone` (handles offsets and DST). */
+const zonedDayStart = (ymd, timeZone = businessTimeZone()) => {
+    const day = toDateOnly(ymd);
+    if (!day) return null;
+    const guess = day.getTime();
+    const first = guess - tzOffsetMs(new Date(guess), timeZone);
+    return new Date(guess - tzOffsetMs(new Date(first), timeZone));
+};
+
 const addDays = (date, days) => new Date(date.getTime() + days * DAY_MS);
 
 /** Whole days from `from` to `to` (both date-only). Negative when `to` is earlier. */
@@ -62,6 +82,7 @@ module.exports = {
     DAY_MS,
     toDateOnly,
     todayDateOnly,
+    zonedDayStart,
     addDays,
     daysBetween,
     formatDateOnly,

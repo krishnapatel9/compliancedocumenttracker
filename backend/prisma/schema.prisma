@@ -32,15 +32,36 @@ model Document {
   issueDate     DateTime       @map("issue_date") @db.Date
   expiryDate    DateTime       @map("expiry_date") @db.Date
   notifyEmail   String         @map("notify_email")
-  filePath      String         @map("file_path")
   description   String?
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
-  
+  // Soft delete: set when moved to the trash; purged after RETENTION_DAYS (see services/retention.js)
+  deletedAt     DateTime?      @map("deleted_at")
+
+  file              DocumentFile?
   notifications     Notification[]
   frameworkControls FrameworkControl[]
 
+  @@index([expiryDate])
+  @@index([category])
+  @@index([createdAt])
+  @@index([deletedAt])
   @@map("documents")
+}
+
+// PDF bytes live in Postgres: hosts with ephemeral disks (Render free tier) lose local files.
+// Kept in a separate table so list/detail queries never load the bytes.
+model DocumentFile {
+  documentId String   @id @map("document_id") @db.Uuid
+  fileName   String   @map("file_name")
+  mimeType   String   @default("application/pdf") @map("mime_type")
+  size       Int
+  data       Bytes
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_files")
 }
 
 model Notification {
@@ -49,7 +70,7 @@ model Notification {
   // The expiry date this warning was for. Renewing a document (new expiry date)
   // starts a fresh warning cycle instead of matching the old warnings.
   expiryDate DateTime @map("expiry_date") @db.Date
-  // Threshold that was crossed: 30, 7, or 0 (expired / expires today)
+  // Threshold that was crossed: 30, 15, 7, or 0 (expired / expires today)
   daysBefore Int      @map("days_before")
   sentAt     DateTime @default(now()) @map("sent_at")
 
@@ -70,5 +91,26 @@ model FrameworkControl {
 
   document    Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
 
+  @@unique([framework, controlCode])
   @@map("framework_controls")
+}
+
+// Append-only record of who did what. No foreign keys on purpose: entries must outlive the
+// document (or admin) they describe. A database trigger rejects UPDATE, DELETE and TRUNCATE.
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  actorId       String?  @map("actor_id") @db.Uuid
+  actorEmail    String   @map("actor_email")   // 'system' for scheduled jobs
+  action        String
+  entityType    String   @map("entity_type")
+  entityId      String?  @map("entity_id")
+  documentTitle String?  @map("document_title") // snapshot, so the entry is readable after a purge
+  details       Json?
+  ip            String?
+
+  @@index([createdAt])
+  @@index([entityId])
+  @@index([action])
+  @@map("audit_logs")
 }

@@ -1,469 +1,1673 @@
 {
-    "openapi": "3.0.0",
-    "info": {
-        "title": "DocShield Compliance Document Tracker API",
-        "version": "1.0.0",
-        "description": "API Engine for managing regulatory compliance documents, expirations, dashboard stats, and alerts triggers."
-    },
-    "servers": [
-        {
-            "url": "http://localhost:5000",
-            "description": "Local Development Server"
-        }
-    ],
-    "components": {
-        "securitySchemes": {
-            "bearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT"
-            }
-        },
-        "schemas": {
-            "Document": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "format": "uuid"
-                    },
-                    "title": {
-                        "type": "string"
-                    },
-                    "category": {
-                        "type": "string",
-                        "enum": [
-                            "license",
-                            "certificate",
-                            "insurance",
-                            "contract",
-                            "permit",
-                            "tax_document"
-                        ]
-                    },
-                    "issueDate": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "expiryDate": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "notifyEmail": {
-                        "type": "string",
-                        "format": "email"
-                    },
-                    "filePath": {
-                        "type": "string"
-                    },
-                    "description": {
-                        "type": "string",
-                        "nullable": true
-                    },
-                    "createdAt": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "updatedAt": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": [
-                            "active",
-                            "expiring_soon",
-                            "expired"
-                        ]
-                    },
-                    "daysRemaining": {
-                        "type": "integer"
-                    }
-                }
-            }
-        }
-    },
-    "security": [
-        {
-            "bearerAuth": []
-        }
-    ],
-    "paths": {
-        "/api/auth/login": {
-            "post": {
-                "summary": "Admin Login",
-                "description": "Authenticate admin user and retrieve JWT token.",
-                "security": [],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "email": {
-                                        "type": "string",
-                                        "example": "admin@compliance.com"
-                                    },
-                                    "password": {
-                                        "type": "string",
-                                        "example": "adminpassword"
-                                    }
-                                },
-                                "required": [
-                                    "email",
-                                    "password"
-                                ]
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Successfully authenticated.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "token": {
-                                            "type": "string"
-                                        },
-                                        "admin": {
-                                            "type": "object",
-                                            "properties": {
-                                                "id": {
-                                                    "type": "string"
-                                                },
-                                                "email": {
-                                                    "type": "string"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Invalid credentials."
-                    }
-                }
-            }
-        },
-        "/api/documents": {
-            "get": {
-                "summary": "List Documents",
-                "description": "Retrieve documents with paginations, search text query and status expiry filters.",
-                "parameters": [
-                    {
-                        "name": "page",
-                        "in": "query",
-                        "schema": {
-                            "type": "integer",
-                            "default": 1
-                        }
-                    },
-                    {
-                        "name": "limit",
-                        "in": "query",
-                        "schema": {
-                            "type": "integer",
-                            "default": 10
-                        }
-                    },
-                    {
-                        "name": "search",
-                        "in": "query",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "name": "category",
-                        "in": "query",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "schema": {
-                            "type": "string",
-                            "enum": [
-                                "active",
-                                "expiring_soon",
-                                "expired"
-                            ]
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "A paginated list of documents.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "items": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/components/schemas/Document"
-                                            }
-                                        },
-                                        "totalItems": {
-                                            "type": "integer"
-                                        },
-                                        "totalPages": {
-                                            "type": "integer"
-                                        },
-                                        "page": {
-                                            "type": "integer"
-                                        },
-                                        "limit": {
-                                            "type": "integer"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "summary": "Create Document",
-                "description": "Upload a new PDF attachment and register metadata.",
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "multipart/form-data": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "title": {
-                                        "type": "string"
-                                    },
-                                    "category": {
-                                        "type": "string"
-                                    },
-                                    "issueDate": {
-                                        "type": "string",
-                                        "format": "date"
-                                    },
-                                    "expiryDate": {
-                                        "type": "string",
-                                        "format": "date"
-                                    },
-                                    "notifyEmail": {
-                                        "type": "string"
-                                    },
-                                    "description": {
-                                        "type": "string"
-                                    },
-                                    "file": {
-                                        "type": "string",
-                                        "format": "binary"
-                                    }
-                                },
-                                "required": [
-                                    "title",
-                                    "category",
-                                    "issueDate",
-                                    "expiryDate",
-                                    "notifyEmail",
-                                    "file"
-                                ]
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "201": {
-                        "description": "Document registered successfully."
-                    },
-                    "400": {
-                        "description": "Validation error or file missing."
-                    }
-                }
-            }
-        },
-        "/api/documents/{id}": {
-            "get": {
-                "summary": "Get Document Details",
-                "parameters": [
-                    {
-                        "name": "id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "format": "uuid"
-                        }
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Details successfully parsed."
-                    },
-                    "404": {
-                        "description": "Document not found."
-                    }
-                }
-            },
-            "put": {
-                "summary": "Update Document",
-                "parameters": [
-                    {
-                        "name": "id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "format": "uuid"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "multipart/form-data": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "title": {
-                                        "type": "string"
-                                    },
-                                    "category": {
-                                        "type": "string"
-                                    },
-                                    "issueDate": {
-                                        "type": "string",
-                                        "format": "date"
-                                    },
-                                    "expiryDate": {
-                                        "type": "string",
-                                        "format": "date"
-                                    },
-                                    "notifyEmail": {
-                                        "type": "string"
-                                    },
-                                    "description": {
-                                        "type": "string"
-                                    },
-                                    "file": {
-                                        "type": "string",
-                                        "format": "binary"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Document successfully edited."
-                    },
-                    "404": {
-                        "description": "Document not found."
-                    }
-                }
-            },
-            "delete": {
-                "summary": "Delete Document",
-                "parameters": [
-                    {
-                        "name": "id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "format": "uuid"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Document and associated local file removed."
-                    }
-                }
-            }
-        },
-        "/api/documents/{id}/file": {
-            "get": {
-                "summary": "Download PDF File",
-                "description": "Download the PDF attachment for the specific compliance document.",
-                "parameters": [
-                    {
-                        "name": "id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "format": "uuid"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "PDF attachment download stream binary data.",
-                        "content": {
-                            "application/pdf": {
-                                "schema": {
-                                    "type": "string",
-                                    "format": "binary"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/dashboard": {
-            "get": {
-                "summary": "Dashboard Aggregated Metrics",
-                "responses": {
-                    "200": {
-                        "description": "Regulatory stats containing expiring warnings and category counts.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "total": {
-                                            "type": "integer"
-                                        },
-                                        "expired": {
-                                            "type": "integer"
-                                        },
-                                        "expiring7d": {
-                                            "type": "integer"
-                                        },
-                                        "expiring30d": {
-                                            "type": "integer"
-                                        },
-                                        "categories": {
-                                            "type": "object"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/services/cron/trigger": {
-            "post": {
-                "summary": "Manual Scan Reminders",
-                "description": "Administratively trigger nodal warning check and send mail notifications.",
-                "responses": {
-                    "200": {
-                        "description": "Manual scan verification results payload."
-                    }
-                }
-            }
-        }
+  "openapi": "3.0.3",
+  "info": {
+    "title": "DocShield Compliance Document Tracker API",
+    "version": "1.2.0",
+    "description": "Manage compliance documents, expiry status, framework mappings and reminder emails.\n\nAll `/api/*` routes except `/api/auth/login`, `/api/health` and `/api/services/cron/run` need `Authorization: Bearer <token>`. Errors are always JSON: `{ \"error\": \"...\" }`, with `details` for validation failures.\n\n**Deleting is soft.** `DELETE /api/documents/{id}` moves a document to the trash, where it can be restored for `RETENTION_DAYS` (default 30) before it is purged. **Every change is recorded** in an append-only audit trail (`GET /api/audit-logs`)."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same origin as this page"
     }
+  ],
+  "tags": [
+    {
+      "name": "Auth"
+    },
+    {
+      "name": "Documents"
+    },
+    {
+      "name": "Dashboard"
+    },
+    {
+      "name": "Frameworks"
+    },
+    {
+      "name": "Notifications"
+    },
+    {
+      "name": "Services"
+    },
+    {
+      "name": "System"
+    },
+    {
+      "name": "Audit"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "cronSecret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-cron-secret"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "requestId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "FileMeta": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        }
+      },
+      "Document": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "license",
+              "certificate",
+              "insurance",
+              "contract",
+              "permit",
+              "tax_document"
+            ]
+          },
+          "issueDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC midnight of the calendar date"
+          },
+          "expiryDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC midnight of the calendar date"
+          },
+          "notifyEmail": {
+            "type": "string",
+            "format": "email"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasFile": {
+            "type": "boolean",
+            "description": "False when no PDF is stored; re-upload via PUT"
+          },
+          "file": {
+            "$ref": "#/components/schemas/FileMeta"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expiring_soon",
+              "expired"
+            ],
+            "description": "expired < today; expiring_soon 0-30 days; active > 30 days"
+          },
+          "daysRemaining": {
+            "type": "integer"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Set while the document is in the trash"
+          },
+          "purgeAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When a trashed document will be permanently deleted"
+          }
+        }
+      },
+      "DocumentPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            }
+          },
+          "totalItems": {
+            "type": "integer"
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "DashboardStats": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "integer"
+          },
+          "expiringSoon": {
+            "type": "integer"
+          },
+          "expired": {
+            "type": "integer"
+          },
+          "expiring7d": {
+            "type": "integer"
+          },
+          "expiring30d": {
+            "type": "integer"
+          },
+          "expiring60d": {
+            "type": "integer"
+          },
+          "expiring90d": {
+            "type": "integer"
+          },
+          "categories": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "healthRate": {
+            "type": "integer",
+            "description": "Percent of documents that are not expired"
+          },
+          "warningsCount": {
+            "type": "integer"
+          },
+          "monthlyUploads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "month": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "FrameworkControl": {
+        "type": "object",
+        "properties": {
+          "framework": {
+            "type": "string",
+            "enum": [
+              "SOC2",
+              "ISO27001",
+              "GDPR"
+            ]
+          },
+          "controlCode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "documentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "linkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "document": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "expiryDate": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "type": "string"
+              },
+              "daysRemaining": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "LinkRequest": {
+        "type": "object",
+        "required": [
+          "framework",
+          "controlCode"
+        ],
+        "properties": {
+          "framework": {
+            "type": "string"
+          },
+          "controlCode": {
+            "type": "string"
+          },
+          "documentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "null unlinks the control"
+          }
+        }
+      },
+      "NotificationLog": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "daysBefore": {
+            "type": "integer",
+            "enum": [
+              30,
+              15,
+              7,
+              0
+            ]
+          },
+          "expiryDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "document": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "expiryDate": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "notifyEmail": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "daysRemaining": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ScanResult": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "scannedThresholds": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "sentCount": {
+            "type": "integer"
+          },
+          "emailsSent": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "skippedDuplicates": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "database": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected"
+            ]
+          },
+          "alerts": {
+            "type": "object",
+            "properties": {
+              "lastRunAt": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "lastSuccessAt": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "lastError": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "AuditLogEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actorId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "actorEmail": {
+            "type": "string",
+            "description": "Admin email, the attempted email for failed logins, or 'system'"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "LOGIN_SUCCESS",
+              "LOGIN_FAILED",
+              "DOCUMENT_CREATED",
+              "DOCUMENT_UPDATED",
+              "DOCUMENT_DOWNLOADED",
+              "DOCUMENT_DELETED",
+              "DOCUMENT_RESTORED",
+              "DOCUMENT_PURGED",
+              "FRAMEWORK_LINKED",
+              "FRAMEWORK_UNLINKED",
+              "EXPIRY_SCAN_RUN"
+            ]
+          },
+          "entityType": {
+            "type": "string",
+            "enum": [
+              "document",
+              "framework_control",
+              "admin",
+              "system"
+            ]
+          },
+          "entityId": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentTitle": {
+            "type": "string",
+            "nullable": true,
+            "description": "Title at the time, so the entry stays readable after a purge"
+          },
+          "details": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "description": "For updates: { changes: { field: { from, to } }, fileReplaced }"
+          },
+          "ip": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "AuditLogPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLogEntry"
+            }
+          },
+          "totalItems": {
+            "type": "integer"
+          },
+          "totalPages": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Log in and receive a JWT",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logged in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "token": {
+                      "type": "string"
+                    },
+                    "admin": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Email or password missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid email or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many failed attempts (10 per 15 minutes per IP)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "List documents",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 150
+            },
+            "description": "Matches title or description"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "license",
+                "certificate",
+                "insurance",
+                "contract",
+                "permit",
+                "tax_document"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "expiring_soon",
+                "expired"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "expiryDate",
+                "issueDate",
+                "title",
+                "deletedAt"
+              ],
+              "default": "createdAt"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "default": "false"
+            },
+            "description": "true lists the trash (soft-deleted documents) instead of live documents"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Create a document with its PDF",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "category",
+                  "issueDate",
+                  "expiryDate",
+                  "notifyEmail",
+                  "file"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 150
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "license",
+                      "certificate",
+                      "insurance",
+                      "contract",
+                      "permit",
+                      "tax_document"
+                    ]
+                  },
+                  "issueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD, not in the future"
+                  },
+                  "expiryDate": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD, after issueDate"
+                  },
+                  "notifyEmail": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "PDF, max 5 MB, verified by magic bytes"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "document": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed, missing file, or not a PDF",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File larger than 5 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get one document",
+        "responses": {
+          "200": {
+            "description": "The document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or malformed id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Update metadata and optionally replace the PDF",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 150
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "license",
+                      "certificate",
+                      "insurance",
+                      "contract",
+                      "permit",
+                      "tax_document"
+                    ]
+                  },
+                  "issueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD, not in the future"
+                  },
+                  "expiryDate": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD, after issueDate"
+                  },
+                  "notifyEmail": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "PDF, max 5 MB, verified by magic bytes"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "document": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File larger than 5 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Move a document to the trash (soft delete)",
+        "responses": {
+          "200": {
+            "description": "Moved to the trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "restorableUntil": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/file": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Download the stored PDF",
+        "responses": {
+          "200": {
+            "description": "The PDF",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Status counts, category distribution and upload trend",
+        "responses": {
+          "200": {
+            "description": "Dashboard statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/frameworks": {
+      "get": {
+        "tags": [
+          "Frameworks"
+        ],
+        "summary": "All SOC2 / ISO27001 / GDPR controls with their linked document",
+        "responses": {
+          "200": {
+            "description": "Controls",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FrameworkControl"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/frameworks/link": {
+      "post": {
+        "tags": [
+          "Frameworks"
+        ],
+        "summary": "Link or unlink a document for a control",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The saved mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrameworkControl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown control or invalid body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Document not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Reminder emails sent (newest 500)",
+        "responses": {
+          "200": {
+            "description": "Log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationLog"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/cron/trigger": {
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Run the expiry scan now (admin)",
+        "responses": {
+          "200": {
+            "description": "Every warning was sent or already sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Mail server unreachable or at least one send failed (warnings are released and retried next scan)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/cron/run": {
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Run the expiry scan from an external scheduler",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every warning was sent or already sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong x-cron-secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Mail server unreachable or at least one send failed (warnings are released and retried next scan)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Liveness, database and last alert scan status",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/restore": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Restore a document from the trash",
+        "responses": {
+          "200": {
+            "description": "Restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "document": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not in the trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/permanent": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Permanently delete a document that is in the trash",
+        "description": "Removes the document, its stored PDF and its reminder history. The audit trail keeps a DOCUMENT_PURGED entry.",
+        "responses": {
+          "200": {
+            "description": "Permanently deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not in the trash (live documents must be moved to the trash first)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit-logs": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Audit trail (append-only), newest first",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "LOGIN_SUCCESS",
+                "LOGIN_FAILED",
+                "DOCUMENT_CREATED",
+                "DOCUMENT_UPDATED",
+                "DOCUMENT_DOWNLOADED",
+                "DOCUMENT_DELETED",
+                "DOCUMENT_RESTORED",
+                "DOCUMENT_PURGED",
+                "FRAMEWORK_LINKED",
+                "FRAMEWORK_UNLINKED",
+                "EXPIRY_SCAN_RUN"
+              ]
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "A document id: returns that document's full history, including framework links that reference it"
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Case-insensitive match on the actor email"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "First day to include (YYYY-MM-DD, in the business time zone APP_TIMEZONE)"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Last day to include (YYYY-MM-DD, in the business time zone APP_TIMEZONE)"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

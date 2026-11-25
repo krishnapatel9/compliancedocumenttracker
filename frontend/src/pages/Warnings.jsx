@@ -1,21 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { formatDateTime, readJson } from '../utils/format';
+import StatusBadge from '../components/StatusBadge';
+
+const milestone = (days) => (days === 0 ? 'Expiry notice' : `${days} days before expiry`);
 
 function Warnings() {
     const { authFetch } = useAuth();
+    const toast = useToast();
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [runningCron, setRunningCron] = useState(false);
-    const [cronSuccess, setCronSuccess] = useState(false);
+    const [running, setRunning] = useState(false);
 
     const fetchNotifications = async () => {
         setError('');
         try {
             const res = await authFetch('/api/notifications');
-            if (!res.ok) throw new Error('Failed to fetch system notifications');
-            const data = await res.json();
-            setNotifications(data);
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Could not load the reminder log');
+            setNotifications(await res.json());
         } catch (err) {
             setError(err.message);
         } finally {
@@ -23,127 +27,65 @@ function Warnings() {
         }
     };
 
-    useEffect(() => {
-        fetchNotifications();
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { fetchNotifications(); }, []);
 
-    const triggerCronCheck = async () => {
-        setRunningCron(true);
-        setCronSuccess(false);
+    const runScan = async () => {
+        setRunning(true);
         try {
-            const res = await authFetch('/api/services/cron/trigger', {
-                method: 'POST'
-            });
-            if (!res.ok) throw new Error('Failed to run compliance scan check');
-            setCronSuccess(true);
-            // Refresh list to pull any new notifications sent
-            await fetchNotifications();
-            setTimeout(() => setCronSuccess(false), 4000);
+            const res = await authFetch('/api/services/cron/trigger', { method: 'POST' });
+            const result = await readJson(res);
+            if (!res.ok) {
+                const detail = result.error || (result.failed && result.failed[0] && result.failed[0].error) || `HTTP ${res.status}`;
+                throw new Error(`The scan did not complete: ${detail}`);
+            }
+            toast.success(`Scan complete: ${result.sentCount} sent, ${result.skippedDuplicates.length} already sent.`);
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         } finally {
-            setRunningCron(false);
+            setRunning(false);
+            fetchNotifications();
         }
     };
 
     return (
-        <div className="page-container animate-fade-in" style={{ padding: '2rem', color: '#f1f3f5' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+        <div>
+            <header className="page-head">
                 <div>
-                    <h1 style={{ fontSize: '1.8rem', fontWeight: 600, color: '#fff', margin: 0 }}>System Warnings</h1>
-                    <p style={{ color: '#868e96', fontSize: '0.9rem', marginTop: '0.25rem' }}>Audit trail logging for proactive notification emails dispatched by backend cron checker.</p>
+                    <h1>Reminders</h1>
+                    <p>Every reminder email the register has sent. Each milestone is sent once per document and expiry date; renewing a document starts a new cycle.</p>
                 </div>
-
-                <div>
-                    <button
-                        onClick={triggerCronCheck}
-                        disabled={runningCron}
-                        style={{
-                            backgroundColor: cronSuccess ? '#2b8a3e' : '#e03131',
-                            border: 'none',
-                            color: '#fff',
-                            padding: '0.6rem 1.2rem',
-                            borderRadius: '6px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.3s',
-                            boxShadow: '0 4px 10px rgba(224,49,49,0.15)'
-                        }}
-                    >
-                        {runningCron ? 'Executing Audit...' : cronSuccess ? 'Audit Scan Completed! ✓' : '⚡ Trigger Manual Audit'}
-                    </button>
+                <div className="page-actions">
+                    <button className="btn" onClick={runScan} disabled={running}>{running ? 'Scanning…' : 'Run scan now'}</button>
                 </div>
-            </div>
+            </header>
 
-            {loading ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}>
-                    <div className="spinner"></div>
-                </div>
-            ) : error ? (
-                <div style={{ border: '1px solid #fa5252', padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(250,82,82,0.05)', color: '#fa5252', margin: '2rem 0' }}>
-                    <strong>Fetch error:</strong> {error}
-                </div>
-            ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    <div style={{
-                        backgroundColor: '#090f18',
-                        border: '1px solid rgba(255,255,255,0.05)',
-                        borderRadius: '8px',
-                        padding: '1.25rem',
-                        fontFamily: 'monospace',
-                        color: '#a6a7ab'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#868e96' }}>
-                            <span>AUDIT DISPATCH ACTIONS HISTORY ({notifications.length} entries)</span>
-                            <span>DATABASE ENGINE LEDGER</span>
-                        </div>
+            {error && <div className="notice error" role="alert">{error}<button className="btn secondary small" onClick={fetchNotifications}>Try again</button></div>}
 
-                        {notifications.length === 0 ? (
-                            <p style={{ textAlign: 'center', padding: '2rem 0', color: '#5c5f66', margin: 0 }}>No alerts have been dispatched yet. Nearing deadlines (30d, 7d) trigger warnings list.</p>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '420px', overflowY: 'auto' }}>
-                                {notifications.map(notif => (
-                                    <div
-                                        key={notif.id}
-                                        style={{
-                                            padding: '0.6rem 0.8rem',
-                                            borderRadius: '6px',
-                                            backgroundColor: '#101726',
-                                            borderLeft: '4px solid #fd7e14',
-                                            fontSize: '0.85rem',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            gap: '1rem'
-                                        }}
-                                    >
-                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                            <span style={{ color: '#868e96' }}>
-                                                [{new Date(notif.sentAt).toLocaleString()}]
-                                            </span>
-                                            <div>
-                                                <span style={{ color: '#4c6ef5', fontWeight: 600 }}>[ALERT SENT]</span>
-                                                <span style={{ color: '#fff', marginLeft: '0.5rem' }}>"{notif.document.title}"</span>
-                                                <span style={{ color: '#a6a7ab', marginLeft: '0.50rem' }}>{notif.daysBefore === 0 ? 'expiry' : `${notif.daysBefore}-day`} warning dispatched to</span>
-                                                <span style={{ color: '#ffd43b', marginLeft: '0.5rem' }}>{notif.document.notifyEmail}</span>
-                                            </div>
-                                        </div>
-
-                                        <span style={{
-                                            fontSize: '0.75rem',
-                                            backgroundColor: 'rgba(253,126,20,0.1)',
-                                            color: '#fd7e14',
-                                            padding: '2px 6px',
-                                            borderRadius: '4px',
-                                            border: '1px solid rgba(253,126,20,0.2)'
-                                        }}>{notif.document.status}</span>
-                                    </div>
+            <div className="panel">
+                {loading ? (
+                    <p className="loading" style={{ padding: '24px 20px' }}>Loading…</p>
+                ) : notifications.length === 0 ? (
+                    <div className="empty"><strong>No reminders sent yet</strong>Reminders go out at 30, 15 and 7 days before a document expires, and once it has expired.</div>
+                ) : (
+                    <div className="table-wrap">
+                        <table className="table">
+                            <thead><tr><th>Sent</th><th>Document</th><th>Milestone</th><th>Sent to</th><th>Document now</th></tr></thead>
+                            <tbody>
+                                {notifications.map((n) => (
+                                    <tr key={n.id}>
+                                        <td>{formatDateTime(n.sentAt)}</td>
+                                        <td className="cell-title" style={{ cursor: 'default' }}>{n.document.title}</td>
+                                        <td>{milestone(n.daysBefore)}</td>
+                                        <td>{n.document.notifyEmail}</td>
+                                        <td><StatusBadge status={n.document.status} days={n.document.daysRemaining} showDays={false} /></td>
+                                    </tr>
                                 ))}
-                            </div>
-                        )}
+                            </tbody>
+                        </table>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
         </div>
     );
 }

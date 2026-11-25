@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.local
 dist/
 uploads/
 *.log
@@ -9,3 +10,5 @@ obj/
 .vscode/
 .idea/
 .DS_Store
+**/.pgdata
+.agents/

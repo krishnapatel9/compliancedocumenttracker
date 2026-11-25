@@ -1,3 +1,16 @@
+> **Historical build log.** This file records how the project was first built (July 2026) and is kept for context. Several things it describes were **replaced in the Nov 2026 remediation**; where this log and the code disagree, the code and `docs/ARCHITECTURE.md` are right:
+>
+> | This log says | Now |
+> |---|---|
+> | pnpm workspaces, `pnpm-workspace.yaml`, `concurrently` | npm workspaces, one root `package-lock.json`, `dev.js` runs both servers |
+> | Docker, `docker-compose.yml`, `Dockerfile`s, `DOCKER_ENV` | removed; Render (Node) + Vercel + Neon/Supabase, `render.yaml` |
+> | PDFs saved to `backend/uploads`, `file_path` column, `utils/storage.js` | PDF bytes in `document_files` (Postgres); no disk, no storage adapter |
+> | Alerts "exactly 30 days or exactly 7 days" | state-based thresholds 30 / 15 / 7 / 0 (expired); unique key (document, expiry date, threshold) |
+> | Console mock fallback when SMTP fails | production fails loudly and retries; mock only in development without `SMTP_HOST` |
+> | Seed runs on container start, default admin | seed is dev-only and refuses production; create the admin with `npm run db:create-admin` |
+> | Swagger UI from unpkg | served locally from `swagger-ui-dist`; spec covers every route (enforced by `tests/openapi.test.js`) |
+> | `verify_phase9.js`, `verify_security.js`, `test_cron.js` | replaced by `tests/api.test.js` and `tests/openapi.test.js` (`npm test`) |
+
 # Compliance Document Tracker - Implementation History
 
 This document records the exact details, files, dependencies, and validation steps for each phase of building the Compliance Document Tracker MVP.
@@ -221,7 +234,7 @@ Completed on July 19, 2026.
 
 ### 1. Alert Scheduler Daemon (`/backend/src/services/cronService.js`)
 * **`checkExpiries`**: Runs daily at midnight (`0 0 * * *`) via `node-cron` to scan for compliance document expiries.
-* Configured alert logic matching target expirations exactly 30 days or exactly 7 days from today.
+* Configured alert logic matching target expirations exactly 30 days or exactly 7 days from today. *(Superseded: thresholds are now state-based, 30/15/7/0; see the table at the top.)*
 * **Notification Deduplication**: Uses the `notifications` database table to record notifications sent for a given `documentId` and `daysBefore` pair. Future runs skip documents that already have matching alert logs.
 * **SMTP Transport Fallbacks**: If `SMTP_HOST` environment variables are populated, validates the connection using `verify()`. If variables are missing or connection fails, the mail service falls back to a clean terminal-formatted console mock transporter. This guarantees that SMTP server errors or offline conditions do not interrupt system performance.
 

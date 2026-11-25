@@ -1,8 +1,27 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { formatDate, formatDateTime, toInputDate, readJson } from '../utils/format';
+import { describeEntry } from '../utils/audit';
+import Icon from '../components/Icon';
+import StatusBadge from '../components/StatusBadge';
+
+const CATEGORIES = [['license', 'Licence'], ['certificate', 'Certificate'], ['insurance', 'Insurance policy'], ['contract', 'Contract'], ['permit', 'Permit'], ['tax_document', 'Tax document']];
+const categoryLabel = (key) => (CATEGORIES.find(([k]) => k === key) || [key, key])[1];
+const msg = (v) => (Array.isArray(v) ? v.join(' ') : v);
+
+const SORT_OPTIONS = {
+    newest: { label: 'Newest first', sort: 'createdAt', order: 'desc' },
+    expiry_asc: { label: 'Expiry: soonest', sort: 'expiryDate', order: 'asc' },
+    expiry_desc: { label: 'Expiry: latest', sort: 'expiryDate', order: 'desc' },
+    title: { label: 'Title A-Z', sort: 'title', order: 'asc' },
+};
 
 function Documents() {
     const { authFetch } = useAuth();
+    const toast = useToast();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     // List state
     const [documents, setDocuments] = useState([]);
@@ -11,15 +30,16 @@ function Documents() {
 
     // Pagination & Filtering state
     const [searchQuery, setSearchQuery] = useState('');
+    const [appliedSearch, setAppliedSearch] = useState('');
+    const [sortKey, setSortKey] = useState('newest');
+    const [view, setView] = useState('active'); // 'active' | 'trash'
+    const [history, setHistory] = useState([]);
     const [filterCategory, setFilterCategory] = useState('');
-    const [filterStatus, setFilterStatus] = useState('');
+    const [filterStatus, setFilterStatus] = useState(searchParams.get('status') || '');
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [totalItems, setTotalItems] = useState(0);
     const itemsPerPage = 5;
-
-    // Filters open state mock
-    const [filtersOpen, setFiltersOpen] = useState(true);
 
     // Form states (Create)
     const [title, setTitle] = useState('');
@@ -33,7 +53,6 @@ function Documents() {
     const [formErrors, setFormErrors] = useState({});
     const [submitError, setSubmitError] = useState(null);
     const [submitting, setSubmitting] = useState(false);
-    const [successMsg, setSuccessMsg] = useState(null);
 
     // Modal active states
     const [selectedDoc, setSelectedDoc] = useState(null);
@@ -53,19 +72,27 @@ function Documents() {
     const fetchDocuments = async () => {
         try {
             setLoading(true);
+            setFetchError(null);
             const params = new URLSearchParams({
                 page: currentPage,
                 limit: itemsPerPage,
-                search: searchQuery,
-                category: filterCategory,
-                status: filterStatus
+                sort: view === 'trash' ? 'deletedAt' : SORT_OPTIONS[sortKey].sort,
+                order: view === 'trash' ? 'desc' : SORT_OPTIONS[sortKey].order
             });
+            if (view === 'trash') params.set('trash', 'true');
+            if (appliedSearch) params.set('search', appliedSearch);
+            if (filterCategory) params.set('category', filterCategory);
+            if (filterStatus) params.set('status', filterStatus);
             const res = await authFetch(`/api/documents?${params.toString()}`);
-            if (!res.ok) throw new Error('Failed to fetch documents');
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Failed to fetch documents');
             const data = await res.json();
             setDocuments(data.items || []);
             setTotalPages(data.totalPages || 1);
             setTotalItems(data.totalItems || 0);
+            // The last item of a page was deleted, or filters shrank the result: go to the last real page.
+            if ((data.items || []).length === 0 && currentPage > 1) {
+                setCurrentPage(Math.max(1, data.totalPages || 1));
+            }
         } catch (err) {
             setFetchError(err.message);
         } finally {
@@ -76,16 +103,50 @@ function Documents() {
     // Re-fetch when page or dropdown filters change
     useEffect(() => {
         fetchDocuments();
-    }, [currentPage, filterCategory, filterStatus]);
+    }, [currentPage, filterCategory, filterStatus, appliedSearch, sortKey, view]);
+
+    // Change history for the document shown in the details modal
+    useEffect(() => {
+        if (activeModal !== 'details' || !selectedDoc) { setHistory([]); return; }
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await authFetch(`/api/audit-logs?entityId=${selectedDoc.id}&limit=20`);
+                if (res.ok && !cancelled) setHistory((await res.json()).items || []);
+            } catch { /* history is optional; the modal still works without it */ }
+        })();
+        return () => { cancelled = true; };
+    }, [activeModal, selectedDoc]);
+
+    // /documents?open=<id> opens that document's details (links from the overview)
+    useEffect(() => {
+        const id = searchParams.get('open');
+        if (!id) return;
+        (async () => {
+            try {
+                const res = await authFetch(`/api/documents/${id}`);
+                if (res.ok) { setSelectedDoc(await res.json()); setActiveModal('details'); }
+            } catch { /* ignore: the register still loads */ }
+            setSearchParams((p) => { p.delete('open'); return p; }, { replace: true });
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const switchView = (next) => {
+        setView(next);
+        setCurrentPage(1);
+        setDocuments([]);
+    };
 
     const handleSearchSubmit = (e) => {
         e.preventDefault();
         setCurrentPage(1);
-        fetchDocuments();
+        setAppliedSearch(searchQuery.trim());
     };
 
     const handleClearFilters = () => {
         setSearchQuery('');
+        setAppliedSearch('');
         setFilterCategory('');
         setFilterStatus('');
         setCurrentPage(1);
@@ -113,7 +174,6 @@ function Documents() {
         e.preventDefault();
         setSubmitError(null);
         setFormErrors({});
-        setSuccessMsg(null);
 
         if (!file) {
             setFormErrors({ file: 'Upload path PDF is required' });
@@ -137,7 +197,7 @@ function Documents() {
                 body: formData
             });
 
-            const data = await res.json();
+            const data = await readJson(res);
 
             if (!res.ok) {
                 if (data.error === 'Validation failed' && data.details) {
@@ -148,7 +208,7 @@ function Documents() {
                 return;
             }
 
-            setSuccessMsg('Asset successfully registered!');
+            toast.success('Document registered.');
             setTitle('');
             setCategory('license');
             setIssueDate('');
@@ -169,8 +229,8 @@ function Documents() {
         setSelectedDoc(doc);
         setEditTitle(doc.title);
         setEditCategory(doc.category);
-        setEditIssueDate(new Date(doc.issueDate).toISOString().substring(0, 10));
-        setEditExpiryDate(new Date(doc.expiryDate).toISOString().substring(0, 10));
+        setEditIssueDate(toInputDate(doc.issueDate));
+        setEditExpiryDate(toInputDate(doc.expiryDate));
         setEditNotifyEmail(doc.notifyEmail);
         setEditDescription(doc.description || '');
         setEditFile(null);
@@ -200,21 +260,22 @@ function Documents() {
                 body: formData
             });
 
-            const data = await res.json();
+            const data = await readJson(res);
 
             if (!res.ok) {
                 if (data.error === 'Validation failed' && data.details) {
                     setEditErrors(data.details);
                 } else {
-                    alert(data.error || 'Failed to update document');
+                    toast.error(data.error || 'Failed to update document');
                 }
                 return;
             }
 
+            toast.success('Document updated.');
             setActiveModal(null);
             fetchDocuments();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         } finally {
             setEditSubmitting(false);
         }
@@ -222,562 +283,370 @@ function Documents() {
 
     const handleDeleteSubmit = async () => {
         try {
-            const res = await authFetch(`/api/documents/${selectedDoc.id}`, {
-                method: 'DELETE'
-            });
-            if (!res.ok) throw new Error('Deletion failed');
+            const res = await authFetch(`/api/documents/${selectedDoc.id}`, { method: 'DELETE' });
+            const data = await readJson(res);
+            if (!res.ok) throw new Error(data.error || 'Deletion failed');
+            toast.success(data.message || 'Document moved to trash.');
             setActiveModal(null);
             fetchDocuments();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
+        }
+    };
+
+    const handleRestore = async (doc) => {
+        try {
+            const res = await authFetch(`/api/documents/${doc.id}/restore`, { method: 'POST' });
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Restore failed');
+            toast.success(`"${doc.title}" restored.`);
+            fetchDocuments();
+        } catch (err) {
+            toast.error(err.message);
+        }
+    };
+
+    const handlePurgeSubmit = async () => {
+        try {
+            const res = await authFetch(`/api/documents/${selectedDoc.id}/permanent`, { method: 'DELETE' });
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Permanent deletion failed');
+            toast.success('Document permanently deleted.');
+            setActiveModal(null);
+            fetchDocuments();
+        } catch (err) {
+            toast.error(err.message);
         }
     };
 
     const handleDownload = async (docId, docTitle) => {
         try {
             const res = await authFetch(`/api/documents/${docId}/file`);
-            if (!res.ok) throw new Error('Attachment download failed. Check server status.');
+            if (!res.ok) throw new Error((await readJson(res)).error || 'Attachment download failed. Check server status.');
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${docTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            try {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${docTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } finally {
+                window.URL.revokeObjectURL(url);
+            }
         } catch (err) {
-            alert('Error downloading: ' + err.message);
+            toast.error('Download failed: ' + err.message);
         }
     };
 
-    const getStatusPipeClass = (status) => {
-        switch (status) {
-            case 'expired': return 'status-pipe-expired';
-            case 'expiring_soon': return 'status-pipe-warning';
-            default: return 'status-pipe-verified';
-        }
-    };
-
-    const getStatusLabelText = (status) => {
-        switch (status) {
-            case 'expired': return 'EXPIRED';
-            case 'expiring_soon': return 'EXPIRING_SOON';
-            default: return 'VERIFIED';
-        }
-    };
+    const closeDrawer = () => setActiveModal(null);
+    const hasFilters = Boolean(searchQuery || appliedSearch || filterCategory || filterStatus);
 
     return (
-        <div className="doc-repository">
-            <div className="doc-repository-header">
+        <div>
+            <header className="page-head">
                 <div>
-                    <h2>Document Repository</h2>
-                    <p className="repo-subtitle">Manage and audit institutional evidence, policy frameworks, and compliance certificates.</p>
+                    <h1>Documents</h1>
+                    <p>Every licence, certificate, policy and permit, with its expiry date and who is reminded.</p>
                 </div>
+                {view === 'active' && (
+                    <div className="page-actions">
+                        <button className="btn" onClick={() => { setSubmitError(null); setFormErrors({}); setActiveModal('create'); }}>
+                            <Icon name="plus" size={16} /> Add document
+                        </button>
+                    </div>
+                )}
+            </header>
 
-                <div className="repo-header-actions">
-                    <button
-                        className="btn-secondary"
-                        onClick={() => setFiltersOpen(!filtersOpen)}
-                        title="Toggle search filters"
-                    >
-                        <span>☰</span> Filters
-                    </button>
-                    <button
-                        className="btn-accent"
-                        onClick={() => {
-                            setSubmitError(null);
-                            setFormErrors({});
-                            setSuccessMsg(null);
-                            setActiveModal('create');
-                        }}
-                    >
-                        + Upload Asset
-                    </button>
-                </div>
+            <div className="tabs" role="tablist">
+                <button role="tab" className="tab" aria-selected={view === 'active'} onClick={() => switchView('active')}>Register</button>
+                <button role="tab" className="tab" aria-selected={view === 'trash'} onClick={() => switchView('trash')}>Trash</button>
             </div>
 
-            {/* Custom search filter bar drawer */}
-            {filtersOpen && (
-                <form onSubmit={handleSearchSubmit} className="registry-filter-overlay filter-drawer-open">
-                    <div className="search-input-wrapper">
-                        <input
-                            type="text"
-                            placeholder="Filter by title/desc..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                        <button type="submit" className="btn-search-go">🔍</button>
+            <form className="toolbar" onSubmit={handleSearchSubmit} role="search">
+                <div className="search">
+                    <Icon name="search" size={16} />
+                    <input className="input" type="search" placeholder="Search title or notes" aria-label="Search documents" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                </div>
+                <select className="select" aria-label="Category" value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }}>
+                    <option value="">All categories</option>
+                    {CATEGORIES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                {view === 'active' && (
+                    <select className="select" aria-label="Status" value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}>
+                        <option value="">Any status</option>
+                        <option value="active">In date</option>
+                        <option value="expiring_soon">Expiring soon</option>
+                        <option value="expired">Expired</option>
+                    </select>
+                )}
+                {view === 'active' && (
+                    <select className="select" aria-label="Sort" value={sortKey} onChange={(e) => { setSortKey(e.target.value); setCurrentPage(1); }}>
+                        {Object.entries(SORT_OPTIONS).map(([key, o]) => <option key={key} value={key}>{o.label}</option>)}
+                    </select>
+                )}
+                <button type="submit" className="btn secondary">Search</button>
+                {hasFilters && <button type="button" className="link-btn" onClick={handleClearFilters}>Clear filters</button>}
+            </form>
+
+            {fetchError && <div className="notice error" role="alert">{fetchError}<button className="btn secondary small" onClick={fetchDocuments}>Try again</button></div>}
+
+            <div className="panel">
+                {loading ? (
+                    <p className="loading" style={{ padding: '24px 20px' }}>Loading…</p>
+                ) : documents.length === 0 ? (
+                    <div className="empty">
+                        <strong>{view === 'trash' ? 'The trash is empty' : hasFilters ? 'No documents match' : 'No documents yet'}</strong>
+                        {view === 'trash' ? 'Deleted documents wait here for 30 days before they are removed for good.' : hasFilters ? 'Try a different search or clear the filters.' : 'Add the first document to start the register.'}
                     </div>
-
-                    <div className="select-filters-wrapper">
-                        <select
-                            value={filterCategory}
-                            onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }}
-                            title="Filter by category"
-                        >
-                            <option value="">All Categories</option>
-                            <option value="license">License</option>
-                            <option value="certificate">Certificate</option>
-                            <option value="insurance">Insurance Policy</option>
-                            <option value="contract">Contract</option>
-                            <option value="permit">Permit</option>
-                            <option value="tax_document">Tax Document</option>
-                        </select>
-
-                        <select
-                            value={filterStatus}
-                            onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
-                            title="Filter by status"
-                        >
-                            <option value="">All Statuses</option>
-                            <option value="active">Active Docs</option>
-                            <option value="expiring_soon">Expiring Soon</option>
-                            <option value="expired">Expired Docs</option>
-                        </select>
-
-                        {(searchQuery || filterCategory || filterStatus) && (
-                            <button type="button" className="btn-clear-capsule" onClick={handleClearFilters}>
-                                Reset Fields
-                            </button>
-                        )}
-                    </div>
-                </form>
-            )}
-
-            {/* Status bar checklist */}
-            <div className="repo-sort-bar">
-                <div className="sort-bar-left">
-                    <span className="sort-item">SORT BY: <strong>LAST_MODIFIED</strong></span>
-                    <span className="sort-item" style={{ opacity: 0.5 }}>CLASSIFICATION: UNRESTRICTED</span>
-                </div>
-                <div>
-                    <span>TOTAL_RECORDS: {totalItems}</span>
-                </div>
-            </div>
-
-            {fetchError && (
-                <div className="alert-error" style={{ margin: '1rem' }}>
-                    [-] CATALOG SYNCHRONIZATION FAILURE: {fetchError}
-                </div>
-            )}
-
-            {loading ? (
-                <div className="state-loading" style={{ color: '#868e96', fontFamily: 'monospace' }}>
-                    [+] RETRIEVING COMPLIANCE CATALOG INDEXING RECORDSET...
-                </div>
-            ) : documents.length === 0 ? (
-                <div className="card" style={{ textAlign: 'center', padding: '3rem', borderTop: 'none' }}>
-                    <p style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                        [-] QUERY_EMPTY: No matching regulatory documents registered on organizational nodes.
-                    </p>
-                </div>
-            ) : (
-                <div className="card repo-table-card">
-                    <div className="repo-table-wrapper">
-                        <table className="repo-table">
-                            <thead>
-                                <tr>
-                                    <th className="checkbox-col-cell"><input type="checkbox" readOnly /></th>
-                                    <th>Document ID</th>
-                                    <th>Label / Name</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                    <th>Custodian</th>
-                                    <th>Exp Date</th>
-                                    <th style={{ textAlign: 'right' }}>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {documents.map((doc) => {
-                                    const codeId = `DOC-${doc.category.substring(0, 2).toUpperCase()}-${doc.id.substring(0, 4).toUpperCase()}`;
-                                    const isExpired = doc.daysRemaining < 0;
-                                    const isWarning = doc.daysRemaining >= 0 && doc.daysRemaining <= 30;
-
-                                    return (
+                ) : (
+                    <>
+                        <div className="table-wrap">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Document</th>
+                                        <th>{view === 'trash' ? 'Deleted' : 'Status'}</th>
+                                        <th>Expires</th>
+                                        <th className="hide-sm">Reminders go to</th>
+                                        <th className="actions"><span className="sr-only">Actions</span></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {documents.map((doc) => (
                                         <tr key={doc.id}>
-                                            <td className="checkbox-col-cell"><input type="checkbox" readOnly /></td>
-                                            <td className="doc-code-cell">{codeId}</td>
-                                            <td
-                                                className="doc-name-cell"
-                                                onClick={() => { setSelectedDoc(doc); setActiveModal('details'); }}
-                                                title="View detailed audit checklist"
-                                            >
-                                                {doc.title}
+                                            <td>
+                                                <button className="cell-title" onClick={() => { setSelectedDoc(doc); setActiveModal('details'); }}>{doc.title}</button>
+                                                <div className="cell-sub">{categoryLabel(doc.category)}</div>
                                             </td>
                                             <td>
-                                                <span className="doc-type-cell">
-                                                    {doc.category.replace('_', ' ')}
-                                                </span>
+                                                {view === 'trash' ? (
+                                                    <span>{formatDate(doc.deletedAt)}<span className="cell-sub">Removed for good {formatDate(doc.purgeAt)}</span></span>
+                                                ) : (
+                                                    <StatusBadge status={doc.status} days={doc.daysRemaining} />
+                                                )}
                                             </td>
-                                            <td className="doc-status-cell">
-                                                <span className={`status-pipe-indicator ${getStatusPipeClass(doc.status)}`}></span>
-                                                <span className={isExpired ? 'exp-date-expired' : isWarning ? 'exp-date-warning' : ''}>
-                                                    {getStatusLabelText(doc.status)}
-                                                </span>
-                                            </td>
-                                            <td className="doc-custodian-cell">{doc.notifyEmail}</td>
-                                            <td className={`doc-exp-cell ${isExpired ? 'exp-date-expired' : isWarning ? 'exp-date-warning' : ''}`}>
-                                                {new Date(doc.expiryDate).toLocaleDateString()}
-                                            </td>
-                                            <td className="action-btns-cell">
-                                                <button
-                                                    className="btn-table-icon"
-                                                    onClick={() => handleDownload(doc.id, doc.title)}
-                                                    title="Download Original PDF Attachment"
-                                                >
-                                                    📥
-                                                </button>
-                                                <button
-                                                    className="btn-table-icon"
-                                                    onClick={() => handleEditOpen(doc)}
-                                                    title="Modify Metadata Properties"
-                                                >
-                                                    ✏️
-                                                </button>
-                                                <button
-                                                    className="btn-table-icon btn-delete"
-                                                    onClick={() => { setSelectedDoc(doc); setActiveModal('delete'); }}
-                                                    title="Permanently Expunge Record Node"
-                                                >
-                                                    🗑️
-                                                </button>
+                                            <td>{formatDate(doc.expiryDate)}</td>
+                                            <td className="hide-sm">{doc.notifyEmail}</td>
+                                            <td className="actions">
+                                                {view === 'trash' ? (
+                                                    <>
+                                                        <button className="icon-btn" onClick={() => handleRestore(doc)} aria-label={`Restore ${doc.title}`} title="Restore"><Icon name="restore" /></button>
+                                                        <button className="icon-btn danger" onClick={() => { setSelectedDoc(doc); setActiveModal('purge'); }} aria-label={`Delete ${doc.title} forever`} title="Delete forever"><Icon name="trash" /></button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <button className="icon-btn" onClick={() => handleDownload(doc.id, doc.title)} disabled={!doc.hasFile} aria-label={`Download ${doc.title}`} title={doc.hasFile ? 'Download PDF' : 'No file stored. Re-upload it via Edit'}><Icon name="download" /></button>
+                                                        <button className="icon-btn" onClick={() => handleEditOpen(doc)} aria-label={`Edit ${doc.title}`} title="Edit"><Icon name="edit" /></button>
+                                                        <button className="icon-btn danger" onClick={() => { setSelectedDoc(doc); setActiveModal('delete'); }} aria-label={`Move ${doc.title} to trash`} title="Move to trash"><Icon name="trash" /></button>
+                                                    </>
+                                                )}
                                             </td>
                                         </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* Pagination control row */}
-                    {totalPages > 1 && (
-                        <div className="repo-pagination-row">
-                            <span>
-                                Page <strong>{currentPage}</strong> of {totalPages}
-                            </span>
-                            <div className="repo-pagination-btn-group">
-                                <button
-                                    className="btn-repo-page"
-                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                    disabled={currentPage === 1}
-                                >
-                                    ◀ Prev
-                                </button>
-                                <button
-                                    className="btn-repo-page"
-                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                    disabled={currentPage === totalPages}
-                                >
-                                    Next ▶
-                                </button>
-                            </div>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
-                    )}
-                </div>
-            )}
+                        <div className="pager">
+                            <span>{totalItems} {totalItems === 1 ? 'document' : 'documents'}{totalPages > 1 ? `, page ${currentPage} of ${totalPages}` : ''}</span>
+                            {totalPages > 1 && (
+                                <div className="pager-btns">
+                                    <button className="btn secondary small" onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))} disabled={currentPage === 1}>Previous</button>
+                                    <button className="btn secondary small" onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages}>Next</button>
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+            </div>
 
-            {/* Modal: Details view drawer */}
+            {/* Details drawer */}
             {activeModal === 'details' && selectedDoc && (
-                <div className="modal-backdrop">
-                    <div className="modal-content">
-                        <div className="modal-header">
-                            <h3>Document Registry Audit Details</h3>
-                            <button className="btn-close" onClick={() => setActiveModal(null)}>✕</button>
+                <div className="overlay" onClick={(e) => e.target === e.currentTarget && closeDrawer()}>
+                    <aside className="drawer" role="dialog" aria-modal="true" aria-label="Document details">
+                        <div className="drawer-head">
+                            <div>
+                                <h2>{selectedDoc.title}</h2>
+                                <div className="cell-sub">{categoryLabel(selectedDoc.category)}</div>
+                            </div>
+                            <button className="icon-btn" onClick={closeDrawer} aria-label="Close"><Icon name="close" /></button>
                         </div>
-                        <div className="modal-body">
-                            <div className="detail-row">
-                                <span className="detail-label">Asset UUID:</span>
-                                <span className="detail-value" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>{selectedDoc.id}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Document:</span>
-                                <span className="detail-value">{selectedDoc.title}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Category:</span>
-                                <span className="detail-value capitalized">{selectedDoc.category.replace('_', ' ')}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Node Status:</span>
-                                <span className="detail-value">
-                                    <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', fontWeight: 'bold' }}>
-                                        {getStatusLabelText(selectedDoc.status)} ({selectedDoc.daysRemaining} days remaining)
-                                    </span>
-                                </span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Issue Date:</span>
-                                <span className="detail-value">{new Date(selectedDoc.issueDate).toLocaleDateString()}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Expiry Date:</span>
-                                <span className="detail-value">{new Date(selectedDoc.expiryDate).toLocaleDateString()}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Recipient:</span>
-                                <span className="detail-value" style={{ fontFamily: 'var(--font-mono)' }}>{selectedDoc.notifyEmail}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Audit Notes:</span>
-                                <p className="detail-desc">{selectedDoc.description || 'No system notes or additional metadata exists for this catalog record.'}</p>
-                            </div>
+                        <div className="drawer-body">
+                            <dl className="facts">
+                                <dt>Status</dt><dd>{selectedDoc.deletedAt ? 'In the trash' : <StatusBadge status={selectedDoc.status} days={selectedDoc.daysRemaining} />}</dd>
+                                <dt>Issued</dt><dd>{formatDate(selectedDoc.issueDate)}</dd>
+                                <dt>Expires</dt><dd>{formatDate(selectedDoc.expiryDate)}</dd>
+                                <dt>Reminders to</dt><dd>{selectedDoc.notifyEmail}</dd>
+                                <dt>File</dt><dd>{selectedDoc.hasFile ? `${selectedDoc.file.fileName} (${Math.max(1, Math.round(selectedDoc.file.size / 1024))} KB)` : 'No PDF stored. Re-upload it via Edit.'}</dd>
+                                <dt>Notes</dt><dd>{selectedDoc.description || 'None'}</dd>
+                                <dt>Reference</dt><dd style={{ fontSize: 12 }}>{selectedDoc.id}</dd>
+                            </dl>
+
+                            <h3 className="section-title">History</h3>
+                            {history.length === 0 ? (
+                                <p className="cell-sub">No changes recorded yet.</p>
+                            ) : (
+                                <ol className="timeline">
+                                    {history.map((e) => (
+                                        <li key={e.id}>
+                                            <span>{describeEntry(e)}</span>
+                                            <span className="when">{formatDateTime(e.createdAt)} by {e.actorEmail}</span>
+                                        </li>
+                                    ))}
+                                </ol>
+                            )}
                         </div>
-                        <div className="modal-footer">
-                            <button className="btn-secondary" onClick={() => handleDownload(selectedDoc.id, selectedDoc.title)}>📥 Download PDF</button>
-                            <button className="btn-primary" onClick={() => handleEditOpen(selectedDoc)}>✏️ Edit Asset</button>
-                        </div>
-                    </div>
+                        {!selectedDoc.deletedAt && (
+                            <div className="drawer-foot">
+                                <button className="btn secondary" disabled={!selectedDoc.hasFile} onClick={() => handleDownload(selectedDoc.id, selectedDoc.title)}><Icon name="download" size={16} /> Download PDF</button>
+                                <button className="btn" onClick={() => handleEditOpen(selectedDoc)}><Icon name="edit" size={16} /> Edit</button>
+                            </div>
+                        )}
+                    </aside>
                 </div>
             )}
 
-            {/* Modal: Create Document Form Drawer */}
+            {/* Add drawer */}
             {activeModal === 'create' && (
-                <div className="modal-backdrop">
-                    <div className="modal-content">
-                        <div className="modal-header">
-                            <h3>Register New evidence Asset</h3>
-                            <button className="btn-close" onClick={() => setActiveModal(null)}>✕</button>
-                        </div>
-                        <form onSubmit={handleCreateSubmit}>
-                            <div className="modal-body">
-                                {submitError && <div className="alert-error">[-] REGISTER_ERROR: {submitError}</div>}
-
-                                <div className="form-group">
-                                    <label htmlFor="title">Asset Title</label>
-                                    <input
-                                        type="text"
-                                        id="title"
-                                        value={title}
-                                        onChange={(e) => setTitle(e.target.value)}
-                                        placeholder="e.g. ISO 9001 Certificate"
-                                        required
-                                    />
-                                    {formErrors.title && <span className="field-error">{formErrors.title}</span>}
+                <div className="overlay" onClick={(e) => e.target === e.currentTarget && closeDrawer()}>
+                    <aside className="drawer" role="dialog" aria-modal="true" aria-label="Add document">
+                        <form onSubmit={handleCreateSubmit} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                            <div className="drawer-head">
+                                <h2>Add a document</h2>
+                                <button type="button" className="icon-btn" onClick={closeDrawer} aria-label="Close"><Icon name="close" /></button>
+                            </div>
+                            <div className="drawer-body">
+                                {submitError && <div className="notice error" role="alert">{submitError}</div>}
+                                <div className="field">
+                                    <label htmlFor="title">Title</label>
+                                    <input type="text" id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. ISO 9001 certificate" required />
+                                    {formErrors.title && <span className="field-error">{msg(formErrors.title)}</span>}
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="category">Category Type</label>
-                                    <select
-                                        id="category"
-                                        value={category}
-                                        onChange={(e) => setCategory(e.target.value)}
-                                        required
-                                    >
-                                        <option value="license">License</option>
-                                        <option value="certificate">Certificate</option>
-                                        <option value="insurance">Insurance Policy</option>
-                                        <option value="contract">Contract</option>
-                                        <option value="permit">Permit</option>
-                                        <option value="tax_document">Tax Document</option>
+                                <div className="field">
+                                    <label htmlFor="category">Category</label>
+                                    <select id="category" value={category} onChange={(e) => setCategory(e.target.value)} required>
+                                        {CATEGORIES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                                     </select>
-                                    {formErrors.category && <span className="field-error">{formErrors.category}</span>}
+                                    {formErrors.category && <span className="field-error">{msg(formErrors.category)}</span>}
                                 </div>
-
-                                <div className="form-row">
-                                    <div className="form-group col">
-                                        <label htmlFor="issueDate">Issue Date</label>
-                                        <input
-                                            type="date"
-                                            id="issueDate"
-                                            value={issueDate}
-                                            onChange={(e) => setIssueDate(e.target.value)}
-                                            required
-                                        />
-                                        {formErrors.issueDate && <span className="field-error">{formErrors.issueDate}</span>}
+                                <div className="field-row">
+                                    <div className="field">
+                                        <label htmlFor="issueDate">Issue date</label>
+                                        <input type="date" id="issueDate" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} required />
+                                        {formErrors.issueDate && <span className="field-error">{msg(formErrors.issueDate)}</span>}
                                     </div>
-
-                                    <div className="form-group col">
-                                        <label htmlFor="expiryDate">Expiry Date</label>
-                                        <input
-                                            type="date"
-                                            id="expiryDate"
-                                            value={expiryDate}
-                                            onChange={(e) => setExpiryDate(e.target.value)}
-                                            required
-                                        />
-                                        {formErrors.expiryDate && <span className="field-error">{formErrors.expiryDate}</span>}
+                                    <div className="field">
+                                        <label htmlFor="expiryDate">Expiry date</label>
+                                        <input type="date" id="expiryDate" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} required />
+                                        {formErrors.expiryDate && <span className="field-error">{msg(formErrors.expiryDate)}</span>}
                                     </div>
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="notifyEmail">Custodian Contact Email</label>
-                                    <input
-                                        type="email"
-                                        id="notifyEmail"
-                                        value={notifyEmail}
-                                        onChange={(e) => setNotifyEmail(e.target.value)}
-                                        placeholder="compliance officer email address"
-                                        required
-                                    />
-                                    {formErrors.notifyEmail && <span className="field-error">{formErrors.notifyEmail}</span>}
+                                <div className="field">
+                                    <label htmlFor="notifyEmail">Send reminders to</label>
+                                    <input type="email" id="notifyEmail" value={notifyEmail} onChange={(e) => setNotifyEmail(e.target.value)} placeholder="compliance@company.com" required />
+                                    {formErrors.notifyEmail && <span className="field-error">{msg(formErrors.notifyEmail)}</span>}
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="description">Audit Notes / Descriptions</label>
-                                    <textarea
-                                        id="description"
-                                        rows="3"
-                                        value={description}
-                                        onChange={(e) => setDescription(e.target.value)}
-                                        placeholder="Outline renewal procedures, contracts mapping reference..."
-                                    />
-                                    {formErrors.description && <span className="field-error">{formErrors.description}</span>}
+                                <div className="field">
+                                    <label htmlFor="description">Notes (optional)</label>
+                                    <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="file-upload">PDF Attachment</label>
-                                    <input
-                                        type="file"
-                                        id="file-upload"
-                                        accept="application/pdf"
-                                        onChange={(e) => handleFileChange(e, false)}
-                                        required
-                                    />
-                                    <span className="file-help">Strictly accepts PDF files up to 5MB</span>
-                                    {formErrors.file && <span className="field-error">{formErrors.file}</span>}
+                                <div className="field">
+                                    <label htmlFor="file-upload">PDF (up to 5 MB)</label>
+                                    <input type="file" id="file-upload" accept="application/pdf" onChange={(e) => handleFileChange(e, false)} />
+                                    {formErrors.file && <span className="field-error">{msg(formErrors.file)}</span>}
                                 </div>
                             </div>
-
-                            <div className="modal-footer">
-                                <button type="button" className="btn-secondary" onClick={() => setActiveModal(null)}>Cancel</button>
-                                <button type="submit" className="btn-primary" disabled={submitting}>
-                                    {submitting ? 'Registering...' : 'Upload Asset'}
-                                </button>
+                            <div className="drawer-foot">
+                                <button type="button" className="btn secondary" onClick={closeDrawer}>Cancel</button>
+                                <button type="submit" className="btn" disabled={submitting}>{submitting ? 'Saving…' : 'Add document'}</button>
                             </div>
                         </form>
-                    </div>
+                    </aside>
                 </div>
             )}
 
-            {/* Modal: Edit Form Drawer */}
+            {/* Edit drawer */}
             {activeModal === 'edit' && selectedDoc && (
-                <div className="modal-backdrop">
-                    <div className="modal-content">
-                        <div className="modal-header">
-                            <h3>Modify Asset metadata</h3>
-                            <button className="btn-close" onClick={() => setActiveModal(null)}>✕</button>
-                        </div>
-                        <form onSubmit={handleEditSubmit}>
-                            <div className="modal-body">
-                                <div className="form-group">
-                                    <label htmlFor="edit-title">Asset Title</label>
-                                    <input
-                                        type="text"
-                                        id="edit-title"
-                                        value={editTitle}
-                                        onChange={(e) => setEditTitle(e.target.value)}
-                                        required
-                                    />
-                                    {editErrors.title && <span className="field-error">{editErrors.title}</span>}
+                <div className="overlay" onClick={(e) => e.target === e.currentTarget && closeDrawer()}>
+                    <aside className="drawer" role="dialog" aria-modal="true" aria-label="Edit document">
+                        <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                            <div className="drawer-head">
+                                <h2>Edit document</h2>
+                                <button type="button" className="icon-btn" onClick={closeDrawer} aria-label="Close"><Icon name="close" /></button>
+                            </div>
+                            <div className="drawer-body">
+                                <div className="field">
+                                    <label htmlFor="edit-title">Title</label>
+                                    <input type="text" id="edit-title" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                                    {editErrors.title && <span className="field-error">{msg(editErrors.title)}</span>}
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="edit-category">Category Type</label>
-                                    <select
-                                        id="edit-category"
-                                        value={editCategory}
-                                        onChange={(e) => setEditCategory(e.target.value)}
-                                        required
-                                    >
-                                        <option value="license">License</option>
-                                        <option value="certificate">Certificate</option>
-                                        <option value="insurance">Insurance Policy</option>
-                                        <option value="contract">Contract</option>
-                                        <option value="permit">Permit</option>
-                                        <option value="tax_document">Tax Document</option>
+                                <div className="field">
+                                    <label htmlFor="edit-category">Category</label>
+                                    <select id="edit-category" value={editCategory} onChange={(e) => setEditCategory(e.target.value)} required>
+                                        {CATEGORIES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                                     </select>
-                                    {editErrors.category && <span className="field-error">{editErrors.category}</span>}
                                 </div>
-
-                                <div className="form-row">
-                                    <div className="form-group col">
-                                        <label htmlFor="edit-issueDate">Issue Date</label>
-                                        <input
-                                            type="date"
-                                            id="edit-issueDate"
-                                            value={editIssueDate}
-                                            onChange={(e) => setEditIssueDate(e.target.value)}
-                                            required
-                                        />
-                                        {editErrors.issueDate && <span className="field-error">{editErrors.issueDate}</span>}
+                                <div className="field-row">
+                                    <div className="field">
+                                        <label htmlFor="edit-issue">Issue date</label>
+                                        <input type="date" id="edit-issue" value={editIssueDate} onChange={(e) => setEditIssueDate(e.target.value)} required />
+                                        {editErrors.issueDate && <span className="field-error">{msg(editErrors.issueDate)}</span>}
                                     </div>
-
-                                    <div className="form-group col">
-                                        <label htmlFor="edit-expiryDate">Expiry Date</label>
-                                        <input
-                                            type="date"
-                                            id="edit-expiryDate"
-                                            value={editExpiryDate}
-                                            onChange={(e) => setEditExpiryDate(e.target.value)}
-                                            required
-                                        />
-                                        {editErrors.expiryDate && <span className="field-error">{editErrors.expiryDate}</span>}
+                                    <div className="field">
+                                        <label htmlFor="edit-expiry">Expiry date</label>
+                                        <input type="date" id="edit-expiry" value={editExpiryDate} onChange={(e) => setEditExpiryDate(e.target.value)} required />
+                                        {editErrors.expiryDate && <span className="field-error">{msg(editErrors.expiryDate)}</span>}
                                     </div>
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="edit-notifyEmail">Custodian Email</label>
-                                    <input
-                                        type="email"
-                                        id="edit-notifyEmail"
-                                        value={editNotifyEmail}
-                                        onChange={(e) => setEditNotifyEmail(e.target.value)}
-                                        required
-                                    />
-                                    {editErrors.notifyEmail && <span className="field-error">{editErrors.notifyEmail}</span>}
+                                <div className="field">
+                                    <label htmlFor="edit-email">Send reminders to</label>
+                                    <input type="email" id="edit-email" value={editNotifyEmail} onChange={(e) => setEditNotifyEmail(e.target.value)} required />
+                                    {editErrors.notifyEmail && <span className="field-error">{msg(editErrors.notifyEmail)}</span>}
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="edit-description">Audit Notes / Descriptions</label>
-                                    <textarea
-                                        id="edit-description"
-                                        rows="3"
-                                        value={editDescription}
-                                        onChange={(e) => setEditDescription(e.target.value)}
-                                    />
-                                    {editErrors.description && <span className="field-error">{editErrors.description}</span>}
+                                <div className="field">
+                                    <label htmlFor="edit-description">Notes</label>
+                                    <textarea id="edit-description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
                                 </div>
-
-                                <div className="form-group">
-                                    <label htmlFor="edit-file-upload">Replace PDF Attachment (Optional)</label>
-                                    <input
-                                        type="file"
-                                        id="edit-file-upload"
-                                        accept="application/pdf"
-                                        onChange={(e) => handleFileChange(e, true)}
-                                    />
-                                    <span className="file-help">Leave empty to keep existing binary file attachment on server</span>
-                                    {editErrors.file && <span className="field-error">{editErrors.file}</span>}
+                                <div className="field">
+                                    <label htmlFor="edit-file">Replace the PDF (optional)</label>
+                                    <input type="file" id="edit-file" accept="application/pdf" onChange={(e) => handleFileChange(e, true)} />
+                                    {editErrors.file && <span className="field-error">{msg(editErrors.file)}</span>}
                                 </div>
                             </div>
-
-                            <div className="modal-footer">
-                                <button type="button" className="btn-secondary" onClick={() => setActiveModal('details')}>Cancel</button>
-                                <button type="submit" className="btn-primary" disabled={editSubmitting}>
-                                    {editSubmitting ? 'Updating...' : 'Save Changes'}
-                                </button>
+                            <div className="drawer-foot">
+                                <button type="button" className="btn secondary" onClick={closeDrawer}>Cancel</button>
+                                <button type="submit" className="btn" disabled={editSubmitting}>{editSubmitting ? 'Saving…' : 'Save changes'}</button>
                             </div>
                         </form>
+                    </aside>
+                </div>
+            )}
+
+            {/* Confirmations */}
+            {activeModal === 'delete' && selectedDoc && (
+                <div className="overlay center" onClick={(e) => e.target === e.currentTarget && closeDrawer()}>
+                    <div className="dialog" role="alertdialog" aria-modal="true" aria-label="Move to trash">
+                        <div className="drawer-head"><h2>Move to trash?</h2></div>
+                        <div className="drawer-body">
+                            <p><strong>{selectedDoc.title}</strong> leaves the register and stops sending reminders. You can restore it from the Trash tab for 30 days; after that it is deleted for good. The deletion is written to the audit log.</p>
+                        </div>
+                        <div className="drawer-foot">
+                            <button className="btn secondary" onClick={closeDrawer}>Cancel</button>
+                            <button className="btn danger" onClick={handleDeleteSubmit}>Move to trash</button>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* Modal: Delete confirm */}
-            {activeModal === 'delete' && selectedDoc && (
-                <div className="modal-backdrop">
-                    <div className="modal-content">
-                        <div className="modal-header">
-                            <h3>Expunge Record Node?</h3>
-                            <button className="btn-close" onClick={() => setActiveModal(null)}>✕</button>
+            {activeModal === 'purge' && selectedDoc && (
+                <div className="overlay center" onClick={(e) => e.target === e.currentTarget && closeDrawer()}>
+                    <div className="dialog" role="alertdialog" aria-modal="true" aria-label="Delete forever">
+                        <div className="drawer-head"><h2>Delete forever?</h2></div>
+                        <div className="drawer-body">
+                            <p><strong>{selectedDoc.title}</strong> will be removed permanently, with its PDF and reminder history. This cannot be undone. The audit log keeps a record that it was deleted, and by whom.</p>
                         </div>
-                        <div className="modal-body">
-                            <p style={{ fontSize: '0.85rem' }}>Are you sure you want to permanently delete the document <strong>"{selectedDoc.title}"</strong>?</p>
-                            <p className="delete-warning">⚠️ This action is irreversible. Associated files and scheduled warning alerts will be deleted permanently.</p>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="btn-secondary" onClick={() => setActiveModal(null)}>Cancel</button>
-                            <button className="btn-primary btn-confirm-delete" onClick={handleDeleteSubmit}>Confirm Expunge</button>
+                        <div className="drawer-foot">
+                            <button className="btn secondary" onClick={closeDrawer}>Cancel</button>
+                            <button className="btn danger" onClick={handlePurgeSubmit}>Delete forever</button>
                         </div>
                     </div>
                 </div>
